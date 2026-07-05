@@ -8,17 +8,18 @@
     "start": "next start"
   },
   "dependencies": {
+    "@vibe-kit/ai": "workspace:*",
+    "@vibe-kit/supabase": "workspace:*",
+    "lunar-javascript": "^1.7.7",
     "next": "^15.3.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "@vibe-kit/supabase": "workspace:*",
-    "@vibe-kit/ai": "workspace:*"
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.5.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0"
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.5.0"
   },
   "//": "빈 스캐폴드지만 그대로 돌아간다 — pnpm install 후 pnpm dev. app/page.tsx 부터 채우면 됨."
 }

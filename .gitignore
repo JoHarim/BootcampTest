@@ -26,3 +26,4 @@ progress.html
 test-results/
 playwright-report/
 .claude/.harness-state.json
+*.tsbuildinfo
