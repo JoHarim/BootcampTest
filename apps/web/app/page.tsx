@@ -57,6 +57,8 @@ export default function Home() {
 
   return (
     <main style={styles.main}>
+      {/* DESIGN.md(Anthropic Claude) — 코랄 버튼 press 다크닝 + 인풋 포커스 코랄 링 */}
+      <style>{designCss}</style>
       <div style={styles.card}>
         {view === "loading" ? <LoadingView /> : null}
         {view === "input" ? (
@@ -69,6 +71,28 @@ export default function Home() {
     </main>
   );
 }
+
+// DESIGN.md 폰트 스택 (라이선스 폰트 대체: 세리프=Georgia, 산세=Inter 계열)
+const SANS = 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+const SERIF = 'Georgia, "Times New Roman", serif';
+
+// 버튼·인풋의 상태(press/focus)는 인라인 스타일로 안 되므로 클래스 CSS로.
+const designCss = `
+  .saju-btn {
+    width: 100%; padding: 12px 20px; min-height: 40px; margin-top: 8px;
+    font-family: ${SANS}; font-size: 14px; font-weight: 500; line-height: 1;
+    color: #fff; background: #cc785c; border: none; border-radius: 8px; cursor: pointer;
+  }
+  .saju-btn:active { background: #a9583e; }
+  .saju-btn.secondary { color: #141413; background: #ffffff; border: 1px solid #e6dfd8; }
+  .saju-btn.secondary:active { background: #f5f0e8; }
+  .saju-input {
+    display: block; width: 100%; box-sizing: border-box; margin-top: 6px;
+    padding: 10px 14px; font-family: ${SANS}; font-size: 16px;
+    color: #141413; background: #faf9f5; border: 1px solid #e6dfd8; border-radius: 8px;
+  }
+  .saju-input:focus { outline: none; border-color: #cc785c; box-shadow: 0 0 0 3px rgba(204,120,92,0.15); }
+`;
 
 // 중립 로딩 뷰 (마운트 확정 전)
 function LoadingView() {
@@ -130,7 +154,7 @@ function BirthInput({
           type="date"
           value={birthDate}
           onChange={(e) => setBirthDate(e.target.value)}
-          style={styles.input}
+          className="saju-input"
         />
       </label>
 
@@ -140,13 +164,13 @@ function BirthInput({
           type="time"
           value={birthTime}
           onChange={(e) => setBirthTime(e.target.value)}
-          style={styles.input}
+          className="saju-input"
         />
       </label>
 
       {error !== "" ? <p style={styles.error}>{error}</p> : null}
 
-      <button type="button" onClick={handleSave} style={styles.button}>
+      <button type="button" onClick={handleSave} className="saju-btn">
         저장
       </button>
     </div>
@@ -187,7 +211,7 @@ function FortuneView({
     return (
       <div>
         <p style={styles.error}>운세를 불러오지 못했어요. 다시 시도</p>
-        <button type="button" onClick={onEdit} style={styles.button}>
+        <button type="button" onClick={onEdit} className="saju-btn secondary">
           정보 수정
         </button>
       </div>
@@ -201,12 +225,12 @@ function FortuneView({
 
   return (
     <div>
-      <p style={styles.muted}>{todayText}</p>
-      <h1 style={styles.title}>{fortune.todayLabel}</h1>
-      <p style={styles.grade(fortune.grade)}>운세 등급: {fortune.grade}</p>
+      <p style={styles.dateCaption}>{todayText}</p>
+      <h1 style={styles.hero}>{fortune.todayLabel}</h1>
+      <span style={styles.gradeBadge(fortune.grade)}>운세 · {fortune.grade}</span>
       <p style={styles.comment}>{fortune.comment}</p>
       <p style={styles.disclaimer}>운세는 재미로 참고해주세요</p>
-      <button type="button" onClick={onEdit} style={styles.button}>
+      <button type="button" onClick={onEdit} className="saju-btn secondary">
         정보 수정
       </button>
     </div>
@@ -218,68 +242,104 @@ function formatToday(d: Date): string {
   return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일`;
 }
 
-const gradeColor: Record<Fortune["grade"], string> = {
-  좋음: "#15803d",
-  보통: "#525252",
-  주의: "#b45309",
+// DESIGN.md 등급 팔레트 (좋음=success, 보통=muted, 주의=warning — 따뜻한 톤)
+const gradePalette: Record<Fortune["grade"], { bg: string; fg: string }> = {
+  좋음: { bg: "#e7f4ea", fg: "#3f8f52" },
+  보통: { bg: "#efe9de", fg: "#6c6a64" },
+  주의: { bg: "#f7efd9", fg: "#a07d10" },
 };
 
 const styles = {
   main: {
-    fontFamily: "system-ui",
+    fontFamily: SANS,
     minHeight: "100vh",
-    background: "#f5f5f4",
+    background: "#faf9f5", // canvas 크림
     display: "flex",
     justifyContent: "center",
     alignItems: "flex-start",
     padding: 24,
   } as const,
   card: {
-    background: "#fff",
-    border: "1px solid #e5e5e3",
-    borderRadius: 12,
-    maxWidth: 420,
+    background: "#ffffff",
+    border: "1px solid #e6dfd8", // hairline
+    borderRadius: 12, // rounded.lg
+    maxWidth: 440,
     width: "100%",
-    padding: 24,
-    marginTop: 48,
+    padding: 32, // spacing.xl — 여백 넉넉히
+    marginTop: 64,
   } as const,
-  title: { fontSize: 22, margin: "0 0 16px" } as const,
+  // 세리프 디스플레이 (S1 제목)
+  title: {
+    fontFamily: SERIF,
+    fontSize: 28,
+    fontWeight: 400,
+    letterSpacing: "-0.3px",
+    color: "#141413", // ink
+    margin: "0 0 20px",
+  } as const,
+  // 세리프 히어로 (오늘의 운세 라벨)
+  hero: {
+    fontFamily: SERIF,
+    fontSize: 30,
+    fontWeight: 400,
+    letterSpacing: "-0.5px",
+    lineHeight: 1.15,
+    color: "#141413",
+    margin: "4px 0 16px",
+  } as const,
   label: {
     display: "block",
+    fontFamily: SANS,
     fontSize: 14,
-    color: "#525252",
+    color: "#6c6a64", // muted
     marginBottom: 16,
   } as const,
-  input: {
-    display: "block",
-    width: "100%",
-    boxSizing: "border-box",
-    marginTop: 6,
-    padding: "10px 12px",
-    fontSize: 16,
-    border: "1px solid #d4d4d2",
-    borderRadius: 8,
+  // caption-uppercase (오늘 날짜)
+  dateCaption: {
+    fontFamily: SANS,
+    fontSize: 12,
+    fontWeight: 500,
+    letterSpacing: "1.5px",
+    textTransform: "uppercase",
+    color: "#8e8b82", // muted-soft
+    margin: "0 0 4px",
   } as const,
-  button: {
-    width: "100%",
-    padding: "12px",
-    fontSize: 16,
-    background: "#171717",
-    color: "#fff",
-    border: "none",
-    borderRadius: 8,
-    cursor: "pointer",
-    marginTop: 8,
+  error: {
+    fontFamily: SANS,
+    color: "#c64545", // error
+    fontSize: 14,
+    margin: "0 0 12px",
   } as const,
-  error: { color: "#dc2626", fontSize: 14, margin: "0 0 12px" } as const,
-  muted: { color: "#737373", fontSize: 14, margin: "0 0 8px" } as const,
-  comment: { fontSize: 16, margin: "12px 0" } as const,
-  disclaimer: { color: "#a3a3a3", fontSize: 12, margin: "16px 0" } as const,
-  grade: (g: Fortune["grade"]) =>
+  muted: {
+    fontFamily: SANS,
+    color: "#8e8b82",
+    fontSize: 14,
+    margin: "0 0 8px",
+  } as const,
+  comment: {
+    fontFamily: SANS,
+    fontSize: 16,
+    lineHeight: 1.55,
+    color: "#3d3d3a", // body
+    margin: "16px 0",
+  } as const,
+  disclaimer: {
+    fontFamily: SANS,
+    color: "#8e8b82",
+    fontSize: 12,
+    margin: "16px 0 0",
+  } as const,
+  // 등급 pill 배지
+  gradeBadge: (g: Fortune["grade"]) =>
     ({
-      fontSize: 16,
-      fontWeight: 600,
-      color: gradeColor[g],
-      margin: "8px 0",
+      display: "inline-block",
+      fontFamily: SANS,
+      fontSize: 13,
+      fontWeight: 500,
+      padding: "4px 12px",
+      borderRadius: 9999, // pill
+      background: gradePalette[g].bg,
+      color: gradePalette[g].fg,
+      marginBottom: 4,
     }) as const,
 };
