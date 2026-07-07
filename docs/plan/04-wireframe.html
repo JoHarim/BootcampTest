@@ -1,31 +1,61 @@
-<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>와이어프레임 — 사주 플래너 (실습)</title>
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>럭키런 로파이 와이어프레임</title>
 <style>
-body{font-family:system-ui;background:#f5f5f4;margin:0;padding:32px;color:#333}
-h1{font-size:20px} h2{font-size:15px;color:#666;margin:32px 0 8px}
-.screen{background:#fff;border:2px solid #ccc;border-radius:8px;max-width:420px;padding:16px;margin-bottom:8px}
-.box{background:#e5e5e3;border:1px dashed #aaa;border-radius:4px;padding:14px;margin:8px 0;text-align:center;color:#555;font-size:13px}
-.btn{background:#d4d4d2;border:1px solid #999;border-radius:6px;padding:10px;text-align:center;font-size:13px;margin:8px 0}
-.note{font-size:12px;color:#999}
-</style></head><body>
-<h1>와이어프레임 — 사주 플래너 (실습) (로파이 · 뼈대만)</h1>
+  body { font-family: sans-serif; background:#f2f2f2; margin:0; padding:24px; color:#333; }
+  h2 { margin:32px 0 8px; }
+  .frame { background:#fff; border:2px solid #999; width:880px; height:520px; position:relative; margin-bottom:8px; padding:16px; box-sizing:border-box; }
+  .box { background:#ddd; border:1px dashed #888; display:flex; align-items:center; justify-content:center; text-align:center; font-size:13px; color:#555; position:absolute; }
+  .note { font-size:13px; color:#666; width:880px; }
+</style>
+</head>
+<body>
+<h1>럭키런 — 로파이 와이어프레임 (PC 가로 1280x800 기준, 축소)</h1>
 
-<h2>S1. 생년월일 입력 — 목적: 내 사주 정보를 받아 저장</h2>
-<div class="screen">
-  <div class="box">제목: 내 사주 정보</div>
-  <div class="box">생년월일 입력칸 (필수 · 날짜 선택)</div>
-  <div class="box">태어난 시각 입력칸 (선택 · 모르면 비움)</div>
-  <div class="btn">저장 버튼 → S2 오늘의 운세</div>
-  <div class="note">잘못 입력: "생년월일을 입력해주세요"</div>
+<h2>S1 타이틀</h2>
+<div class="frame">
+  <div class="box" style="top:16px; right:16px; width:48px; height:32px;">소리</div>
+  <div class="box" style="top:90px; left:240px; width:400px; height:110px;">로고 LUCKY RUN<br>(텍스트 아트 + 코인 장식)</div>
+  <div class="box" style="top:230px; left:320px; width:240px; height:52px;">[새 런 시작]</div>
+  <div class="box" style="top:292px; left:320px; width:240px; height:44px;">[이어하기] 라운드3 · 1,240코인<br>(저장 런 있을 때만)</div>
+  <div class="box" style="top:356px; left:280px; width:320px; height:56px;">최고 기록: 라운드 5 · 8,420코인 · 12런<br>[기록 초기화]</div>
+  <div class="box" style="bottom:14px; left:200px; width:480px; height:28px;">고지: 가상 재화, 현금 교환·환전 불가</div>
 </div>
 
-<h2>S2. 오늘의 운세 — 목적: 오늘 운세 표시</h2>
-<div class="screen">
-  <div class="box">오늘 날짜</div>
-  <div class="box">오늘의 일진 (예: 오늘은 갑자일)</div>
-  <div class="box">운세 등급: 좋음 / 보통 / 주의</div>
-  <div class="box">한 줄 코멘트</div>
-  <div class="btn">정보 수정 → S1</div>
-  <div class="note">면책: 운세는 재미로 참고해주세요</div>
-  <div class="note">정보 없을 때: S1 입력 화면으로 보냄</div>
+<h2>S2 게임장 — 슬롯 부스 탭</h2>
+<div class="frame">
+  <div class="box" style="top:12px; left:16px; width:848px; height:56px;">HUD: 코인 1,240 | 라운드 2 | 목표 1,300 | 기회 ●●●●●○○○○○ | 소리</div>
+  <div class="box" style="top:84px; left:16px; width:200px; height:40px;">[탭] 스크래치 | 슬롯(선택됨)</div>
+  <div class="box" style="top:140px; left:200px; width:380px; height:300px;">슬롯 캐비닛<br>마퀴 조명 / 릴 창 3개(위아래 심볼 살짝 보임)<br>페이라인 / 당첨 표시</div>
+  <div class="box" style="top:170px; left:600px; width:56px; height:200px;">레버<br>(당기면 스핀)</div>
+  <div class="box" style="top:460px; left:240px; width:400px; height:40px;">베팅: [50] [150] [400] — 코인 부족하면 비활성</div>
 </div>
-</body></html>
+
+<h2>S2 게임장 — 스크래치 부스 탭</h2>
+<div class="frame">
+  <div class="box" style="top:12px; left:16px; width:848px; height:56px;">HUD (동일)</div>
+  <div class="box" style="top:84px; left:16px; width:200px; height:40px;">[탭] 스크래치(선택됨) | 슬롯</div>
+  <div class="box" style="top:150px; left:100px; width:200px; height:180px;">동 티켓 50<br>상금표 요약<br>[구매]</div>
+  <div class="box" style="top:150px; left:340px; width:200px; height:180px;">은 티켓 150<br>상금표 요약<br>[구매]</div>
+  <div class="box" style="top:150px; left:580px; width:200px; height:180px;">금 티켓 400<br>상금표 요약<br>[구매]</div>
+  <div class="box" style="top:360px; left:240px; width:400px; height:130px;">구매하면 여기 티켓 등장<br>(긁는 캔버스 — 45% 긁으면 공개)</div>
+</div>
+
+<h2>S2 위 팝업 — 라운드 클리어</h2>
+<div class="frame" style="height:280px;">
+  <div class="box" style="top:40px; left:240px; width:400px; height:180px;">ROUND 2 CLEAR!<br>코인 이월 · 다음 목표 2,100 · 기회 10 리셋<br>[다음 라운드]</div>
+</div>
+
+<h2>S3 결과</h2>
+<div class="frame">
+  <div class="box" style="top:60px; left:320px; width:240px; height:60px;">게임 오버 (사유: 목표 미달)</div>
+  <div class="box" style="top:150px; left:280px; width:320px; height:120px;">도달 라운드 3 (크게)<br>최종 코인 340 · 최대 당첨 2,000<br>신기록! 배지(해당 시)</div>
+  <div class="box" style="top:300px; left:280px; width:320px; height:44px;">최고 기록 비교</div>
+  <div class="box" style="top:370px; left:320px; width:240px; height:48px;">[새 런 시작]</div>
+  <div class="box" style="top:430px; left:360px; width:160px; height:36px;">[타이틀로]</div>
+</div>
+<p class="note">모바일 세로: HUD 2줄로 접힘, 부스는 세로 스택, 캐비닛 축소. 레버는 버튼 겸용.</p>
+</body>
+</html>

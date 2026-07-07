@@ -1,0 +1,31 @@
+<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>와이어프레임 — 사주 플래너 (실습)</title>
+<style>
+body{font-family:system-ui;background:#f5f5f4;margin:0;padding:32px;color:#333}
+h1{font-size:20px} h2{font-size:15px;color:#666;margin:32px 0 8px}
+.screen{background:#fff;border:2px solid #ccc;border-radius:8px;max-width:420px;padding:16px;margin-bottom:8px}
+.box{background:#e5e5e3;border:1px dashed #aaa;border-radius:4px;padding:14px;margin:8px 0;text-align:center;color:#555;font-size:13px}
+.btn{background:#d4d4d2;border:1px solid #999;border-radius:6px;padding:10px;text-align:center;font-size:13px;margin:8px 0}
+.note{font-size:12px;color:#999}
+</style></head><body>
+<h1>와이어프레임 — 사주 플래너 (실습) (로파이 · 뼈대만)</h1>
+
+<h2>S1. 생년월일 입력 — 목적: 내 사주 정보를 받아 저장</h2>
+<div class="screen">
+  <div class="box">제목: 내 사주 정보</div>
+  <div class="box">생년월일 입력칸 (필수 · 날짜 선택)</div>
+  <div class="box">태어난 시각 입력칸 (선택 · 모르면 비움)</div>
+  <div class="btn">저장 버튼 → S2 오늘의 운세</div>
+  <div class="note">잘못 입력: "생년월일을 입력해주세요"</div>
+</div>
+
+<h2>S2. 오늘의 운세 — 목적: 오늘 운세 표시</h2>
+<div class="screen">
+  <div class="box">오늘 날짜</div>
+  <div class="box">오늘의 일진 (예: 오늘은 갑자일)</div>
+  <div class="box">운세 등급: 좋음 / 보통 / 주의</div>
+  <div class="box">한 줄 코멘트</div>
+  <div class="btn">정보 수정 → S1</div>
+  <div class="note">면책: 운세는 재미로 참고해주세요</div>
+  <div class="note">정보 없을 때: S1 입력 화면으로 보냄</div>
+</div>
+</body></html>
