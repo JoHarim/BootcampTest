@@ -202,3 +202,20 @@ const SPIN_TABLE: Weighted<() => SpinOutcome>[] = [
 export function drawSpin(): SpinOutcome {
   return drawWeighted(SPIN_TABLE)();
 }
+
+// ── 사채 상어 "미스터 핀" 대출 ─────────────────────────────
+// 한탕 자금. 판정 이원화가 핵심 불변식: 목표 달성·마감 = 순자산(코인-빚) / 파산·구매 = 총 코인.
+// 빚은 라운드 종료 정산(보너스 지급 → 자동 상환)에서 반드시 청산 — 다음 라운드로 못 넘어간다.
+
+export const LOAN_RATE = 0.05; // 기회 1회 소모마다 원금의 5% (대출 시점에 정수로 고정)
+
+// 대출액: 목표의 50%를 50단위 반올림하되, "베팅 가능한 돈"(최대 베팅 400 x 잔여기회)을 넘지 않게.
+// 초과 원금은 베팅도 못 하면서 이자만 무는 함정이라 잔여기회 캡이 필수.
+export function loanAmountFor(target: number, playsLeft: number): number {
+  const half = Math.round(target / 2 / 50) * 50;
+  return Math.max(400, Math.min(half, 400 * Math.max(1, playsLeft)));
+}
+
+export function loanInterestPerPlay(principal: number): number {
+  return Math.round(principal * LOAN_RATE);
+}

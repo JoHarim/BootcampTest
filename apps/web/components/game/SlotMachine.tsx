@@ -36,11 +36,13 @@ export default function SlotMachine({ coins, locked, onPlay, onWin, onDone }: Pr
   const [lastOutcome, setLastOutcome] = useState<{ outcome: SpinOutcome; win: number } | null>(null);
   const [leverPulled, setLeverPulled] = useState(false);
   const rafRef = useRef<number | null>(null);
+  const failsafeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTickRef = useRef(0);
 
   useEffect(() => {
     return () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+      if (failsafeRef.current !== null) clearTimeout(failsafeRef.current);
     };
   }, []);
 
@@ -102,10 +104,24 @@ export default function SlotMachine({ coins, locked, onPlay, onWin, onDone }: Pr
         rafRef.current = requestAnimationFrame(frame);
       } else {
         rafRef.current = null;
+        if (failsafeRef.current !== null) {
+          clearTimeout(failsafeRef.current);
+          failsafeRef.current = null;
+        }
         settle(outcome, win);
       }
     }
     rafRef.current = requestAnimationFrame(frame);
+    // 페일세이프: 탭이 백그라운드면 rAF가 얼어 릴이 영원히 안 멈춘다 — 시간이 지나면 강제 정산
+    failsafeRef.current = setTimeout(() => {
+      failsafeRef.current = null;
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+        setPositions(targets);
+        settle(outcome, win);
+      }
+    }, DURATIONS[2] + 500);
   }
 
   function settle(outcome: SpinOutcome, win: number) {

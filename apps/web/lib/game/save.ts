@@ -7,6 +7,13 @@ export interface BestRecord {
   totalRuns: number;
 }
 
+// 미스터 핀 대출 상태 — 반드시 luckyrun:run 안에 함께 저장(코인과 빚이 따로 놀면 세이브 스컴 구멍)
+export interface LoanState {
+  principal: number; // 원금
+  perPlay: number; // 기회당 이자 (대출 시점에 고정)
+  accrued: number; // 누적 이자
+}
+
 export interface ActiveRun {
   coins: number;
   round: number;
@@ -14,6 +21,8 @@ export interface ActiveRun {
   playsLeft: number;
   booth: "scratch" | "slot";
   savedAt: number;
+  loan: LoanState | null;
+  loanUsedThisRound: boolean; // 라운드당 신규 대출 1회 제한
 }
 
 export interface Settings {
@@ -69,6 +78,18 @@ function isBest(v: unknown): v is BestRecord {
   );
 }
 
+function isLoan(v: unknown): v is LoanState {
+  return (
+    isRecord(v) &&
+    typeof v.principal === "number" &&
+    typeof v.perPlay === "number" &&
+    typeof v.accrued === "number" &&
+    v.principal > 0 &&
+    v.accrued >= 0
+  );
+}
+
+// 대출 필드는 나중에 추가된 옵션 — 구버전 저장 런(필드 없음)을 유효로 인정해야 런이 증발하지 않는다
 function isRun(v: unknown): v is ActiveRun {
   return (
     isRecord(v) &&
@@ -80,8 +101,19 @@ function isRun(v: unknown): v is ActiveRun {
     typeof v.savedAt === "number" &&
     v.coins >= 0 &&
     v.round >= 1 &&
-    v.playsLeft >= 0
+    v.playsLeft >= 0 &&
+    (v.loan === undefined || v.loan === null || isLoan(v.loan)) &&
+    (v.loanUsedThisRound === undefined || typeof v.loanUsedThisRound === "boolean")
   );
+}
+
+// 구버전 저장 런을 현재 형태로 채워서 반환 (마이그레이션)
+function normalizeRun(run: ActiveRun): ActiveRun {
+  return {
+    ...run,
+    loan: run.loan ?? null,
+    loanUsedThisRound: run.loanUsedThisRound ?? false,
+  };
 }
 
 function isSettings(v: unknown): v is Settings {
@@ -93,7 +125,10 @@ export const saveStore = {
   saveBest: (b: BestRecord) => write(KEY_BEST, b),
   clearBest: () => remove(KEY_BEST),
 
-  loadRun: () => read(KEY_RUN, isRun),
+  loadRun: () => {
+    const run = read(KEY_RUN, isRun);
+    return run === null ? null : normalizeRun(run);
+  },
   saveRun: (r: ActiveRun) => write(KEY_RUN, r),
   clearRun: () => remove(KEY_RUN),
 

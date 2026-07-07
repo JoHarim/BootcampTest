@@ -98,6 +98,19 @@ export const sfx = {
   countTick() {
     tone({ freq: 1600, dur: 0.018, type: "square", gain: 0.02 });
   },
+  // 미스터 핀 계약 체결 — 금전등록기 '차-칭'을 반음 낮게, 끝을 벤드다운 (달콤한데 뒷맛이 찜찜)
+  loanDeal() {
+    tone({ freq: 262, dur: 0.09, type: "square", gain: 0.08 });
+    tone({ freq: 196, endFreq: 175, dur: 0.28, type: "square", gain: 0.08, at: 0.1 });
+    noise(0.08, 0.05, 3000, 0.05);
+  },
+  // 빚 청산 — 당첨음보다 한 옥타브 낮은 해방 아르페지오 + 동전 샤워
+  repay() {
+    [262, 330, 392, 523].forEach((f, i) =>
+      tone({ freq: f, dur: 0.15, type: "triangle", gain: 0.11, at: i * 0.08 }),
+    );
+    noise(0.25, 0.04, 5000, 0.3);
+  },
   roundClear() {
     [523, 659, 784].forEach((f, i) => tone({ freq: f, dur: 0.14, type: "triangle", gain: 0.1, at: i * 0.09 }));
     tone({ freq: 1047, dur: 0.5, type: "triangle", gain: 0.1, at: 0.3 });

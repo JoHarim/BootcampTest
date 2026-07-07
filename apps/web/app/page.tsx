@@ -13,10 +13,17 @@ import {
   bankBonus,
   canAfford,
   canBank,
+  canRepay,
+  canTakeLoan,
+  debtTotal,
   judge,
+  loanOffer,
+  netWorth,
   newRun,
   nextRound,
   payForPlay,
+  repayLoan,
+  takeLoan,
 } from "../lib/game/run";
 import { saveStore, type ActiveRun, type BestRecord } from "../lib/game/save";
 
@@ -26,13 +33,15 @@ interface ClearInfo {
   fromRound: number;
   banked: boolean;
   bonus: number;
+  debtPaid: number; // 정산에서 회수될 미스터 핀 몫 (원금+이자)
 }
 
 interface RunResult {
   round: number;
-  coins: number;
+  coins: number; // 순자산 기준 (빚 낀 기록 부풀림 방지)
   reason: "target" | "broke";
   isNewBest: boolean;
+  hadDebt: boolean;
 }
 
 export default function LuckyRun() {
@@ -45,6 +54,8 @@ export default function LuckyRun() {
   const [result, setResult] = useState<RunResult | null>(null);
   const [confirmNewRun, setConfirmNewRun] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [loanModal, setLoanModal] = useState(false); // 미스터 핀 자발 대출 모달
+  const [rescue, setRescue] = useState(false); // 파산 직전 구제 모달 (judge가 broke-rescue 반환한 순간 1회)
   const runRef = useRef<ActiveRun | null>(null);
 
   useEffect(() => {
@@ -81,6 +92,8 @@ export default function LuckyRun() {
     setClearInfo(null);
     setResult(null);
     setLocked(false);
+    setLoanModal(false);
+    setRescue(false);
     persistRun(newRun());
     setPhase("game");
   }
@@ -90,6 +103,15 @@ export default function LuckyRun() {
     sfx.blip();
     setLocked(false);
     setPhase("game");
+    // 저장 시점이 플레이 도중(지불 후·정산 전)이었을 수 있다 — 진입 즉시 판정해 조작 불능 상태를 방지
+    const cur = runRef.current;
+    if (cur !== null) {
+      const verdict = judge(cur);
+      if (verdict === "clear") openClear(false);
+      else if (verdict === "broke-rescue") setRescue(true);
+      else if (verdict === "gameover-target") finishRun("target");
+      else if (verdict === "gameover-broke") finishRun("broke");
+    }
   }
 
   function resetBest() {
@@ -118,7 +140,7 @@ export default function LuckyRun() {
   // 플레이 1회 시작 — 코인·기회 차감. 성공하면 연출 잠금.
   function handlePlay(cost: number): boolean {
     const cur = runRef.current;
-    if (cur === null || locked || clearInfo !== null) return false;
+    if (cur === null || locked || clearInfo !== null || rescue || loanModal) return false;
     if (!canAfford(cur, cost)) return false;
     ensureAudio();
     setLocked(true);
@@ -140,6 +162,7 @@ export default function LuckyRun() {
     if (cur === null) return;
     const verdict = judge(cur);
     if (verdict === "clear") openClear(false);
+    else if (verdict === "broke-rescue") setRescue(true);
     else if (verdict === "gameover-target") finishRun("target");
     else if (verdict === "gameover-broke") finishRun("broke");
   }
@@ -147,9 +170,37 @@ export default function LuckyRun() {
   function openClear(banked: boolean) {
     const cur = runRef.current;
     if (cur === null) return;
-    setClearInfo({ fromRound: cur.round, banked, bonus: banked ? bankBonus(cur) : 0 });
+    setClearInfo({
+      fromRound: cur.round,
+      banked,
+      bonus: banked ? bankBonus(cur) : 0,
+      debtPaid: debtTotal(cur),
+    });
     sfx.roundClear();
     burstConfetti(100, 0.5, 0.3);
+  }
+
+  // ── 미스터 핀 대출 ─────────────────────────────────
+  function acceptLoan() {
+    const cur = runRef.current;
+    if (cur === null || !canTakeLoan(cur)) return;
+    persistRun(takeLoan(cur));
+    setLoanModal(false);
+    setRescue(false);
+    sfx.loanDeal();
+  }
+
+  function declineRescue() {
+    setRescue(false);
+    finishRun("broke");
+  }
+
+  function repayNow() {
+    const cur = runRef.current;
+    if (cur === null || locked || !canRepay(cur)) return;
+    persistRun(repayLoan(cur));
+    sfx.repay();
+    burstConfetti(40, 0.5, 0.3);
   }
 
   function bankRound() {
@@ -169,19 +220,22 @@ export default function LuckyRun() {
   function finishRun(reason: "target" | "broke") {
     const cur = runRef.current;
     if (cur === null) return;
+    // 기록은 순자산 기준 — 빚 6,700 낀 코인 6,740 으로 신기록 찍는 부풀림 방지
+    const finalCoins = Math.max(0, netWorth(cur));
+    const hadDebt = cur.loan !== null;
     const prev = best;
     const isNewBest =
       prev === null ||
       cur.round > prev.bestRound ||
-      (cur.round === prev.bestRound && cur.coins > prev.bestCoins);
+      (cur.round === prev.bestRound && finalCoins > prev.bestCoins);
     const nextBest: BestRecord = {
       bestRound: prev === null ? cur.round : Math.max(prev.bestRound, cur.round),
-      bestCoins: prev === null ? cur.coins : Math.max(prev.bestCoins, cur.coins),
+      bestCoins: prev === null ? finalCoins : Math.max(prev.bestCoins, finalCoins),
       totalRuns: (prev === null ? 0 : prev.totalRuns) + 1,
     };
     saveStore.saveBest(nextBest);
     setBest(nextBest);
-    setResult({ round: cur.round, coins: cur.coins, reason, isNewBest });
+    setResult({ round: cur.round, coins: finalCoins, reason, isNewBest, hadDebt });
     persistRun(null);
     setPhase("result");
     if (isNewBest) {
@@ -277,6 +331,12 @@ export default function LuckyRun() {
           <div style={st.hud} data-testid="hud">
             <div style={st.hudCoins}>
               🪙 <CoinCounter value={run.coins} />
+              {run.loan !== null ? (
+                <div style={st.debtLine} data-testid="debt-line">
+                  🦈 빚 {debtTotal(run).toLocaleString()} (+{run.loan.perPlay}/기회) → 순자산{" "}
+                  {netWorth(run).toLocaleString()}
+                </div>
+              ) : null}
             </div>
             <div style={st.hudCenter}>
               <div style={st.hudRound}>ROUND {run.round}</div>
@@ -284,12 +344,12 @@ export default function LuckyRun() {
                 <div
                   style={{
                     ...st.targetBarFill,
-                    width: `${Math.min(100, (run.coins / run.target) * 100)}%`,
-                    background: run.coins >= run.target ? "#5db872" : "#f5c542",
+                    width: `${Math.min(100, Math.max(0, netWorth(run) / run.target) * 100)}%`,
+                    background: netWorth(run) >= run.target ? "#5db872" : "#f5c542",
                   }}
                 />
                 <span style={st.targetLabel}>
-                  목표 🪙{run.target.toLocaleString()} {run.coins >= run.target ? "달성!" : ""}
+                  목표 🪙{run.target.toLocaleString()} {netWorth(run) >= run.target ? "달성!" : ""}
                 </span>
               </div>
               <div style={st.playsRow} data-testid="plays-row">
@@ -305,10 +365,34 @@ export default function LuckyRun() {
                 <span style={st.playsLabel}>기회 {run.playsLeft}</span>
               </div>
             </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               {canBank(run) && !locked ? (
                 <button type="button" className="btn-gold" data-testid="bank-btn" onClick={bankRound}>
                   라운드 마감 (+{bankBonus(run).toLocaleString()})
+                </button>
+              ) : null}
+              {canTakeLoan(run) && !locked ? (
+                <button
+                  type="button"
+                  className="btn-shark"
+                  data-testid="loan-btn"
+                  onClick={() => {
+                    sfx.blip();
+                    setLoanModal(true);
+                  }}
+                >
+                  🦈 한탕 자금?
+                </button>
+              ) : null}
+              {run.loan !== null ? (
+                <button
+                  type="button"
+                  className="btn-shark"
+                  data-testid="repay-btn"
+                  disabled={locked || !canRepay(run)}
+                  onClick={repayNow}
+                >
+                  🦈 전액 상환 −{debtTotal(run).toLocaleString()}
                 </button>
               ) : null}
             </div>
@@ -336,9 +420,9 @@ export default function LuckyRun() {
 
           <div style={st.boothArea}>
             {run.booth === "scratch" ? (
-              <ScratchBooth coins={run.coins} locked={locked || clearInfo !== null} onPlay={handlePlay} onWin={handleWin} onDone={handleDone} />
+              <ScratchBooth coins={run.coins} locked={locked || clearInfo !== null || rescue || loanModal} onPlay={handlePlay} onWin={handleWin} onDone={handleDone} />
             ) : (
-              <SlotMachine coins={run.coins} locked={locked || clearInfo !== null} onPlay={handlePlay} onWin={handleWin} onDone={handleDone} />
+              <SlotMachine coins={run.coins} locked={locked || clearInfo !== null || rescue || loanModal} onPlay={handlePlay} onWin={handleWin} onDone={handleDone} />
             )}
           </div>
 
@@ -355,12 +439,84 @@ export default function LuckyRun() {
                 ) : (
                   <p style={st.popupLine}>기회를 전부 불태우고 살아남았다!</p>
                 )}
+                {clearInfo.debtPaid > 0 ? (
+                  <p style={st.popupLine} data-testid="clear-debt-line">
+                    🦈 미스터 핀 몫 회수 <strong style={{ color: "#e07a6a" }}>−{clearInfo.debtPaid.toLocaleString()}</strong>
+                    <br />
+                    <span style={{ fontSize: 13, color: "#b8a58f" }}>&ldquo;…거래 즐거웠어. 또 와~&rdquo;</span>
+                  </p>
+                ) : null}
                 <p style={st.popupLine}>
                   다음 목표 — 🪙{targetForRound(clearInfo.fromRound + 1).toLocaleString()} · 기회 {PLAYS_PER_ROUND}회 리셋
                 </p>
                 <button type="button" className="btn-gold btn-big" data-testid="next-round-btn" onClick={proceedNextRound}>
                   라운드 {clearInfo.fromRound + 1} 시작 →
                 </button>
+              </div>
+            </div>
+          ) : null}
+
+          {/* 미스터 핀 — 자발 대출 모달 */}
+          {loanModal ? (
+            <div style={st.overlay}>
+              <div style={{ ...st.popup, borderColor: "#5db8a6" }} className="pop-in" data-testid="loan-modal">
+                <div style={{ fontSize: 42 }}>🦈</div>
+                <h2 style={{ ...st.popupTitle, color: "#5db8a6", fontSize: 24 }}>상어금융 — 미스터 핀</h2>
+                <p style={st.popupLine}>
+                  &ldquo;어서 와~ 정직한(?) 상어금융이야.{" "}
+                  <strong style={{ color: "#f5c542" }}>{loanOffer(run).amount.toLocaleString()}코인</strong>, 지금 바로.
+                  대신 네가 플레이할 때마다 내 몫이{" "}
+                  <strong style={{ color: "#e07a6a" }}>+{loanOffer(run).perPlay}</strong>씩 자라. 난 기다리는 게
+                  취미거든. 히히.&rdquo;
+                </p>
+                <p style={{ ...st.popupLine, fontSize: 13, color: "#b8a58f" }}>
+                  라운드가 끝나면 원금+이자 자동 회수 · 이번 라운드 1회 한정 · 조기 전액 상환 가능
+                </p>
+                <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 14, flexWrap: "wrap" }}>
+                  <button type="button" className="btn-gold" data-testid="loan-accept" onClick={acceptLoan}>
+                    도장 꽝! +{loanOffer(run).amount.toLocaleString()} 입금
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    data-testid="loan-decline"
+                    onClick={() => {
+                      sfx.blip();
+                      setLoanModal(false);
+                    }}
+                  >
+                    지느러미 사양할게
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {/* 미스터 핀 — 파산 직전 구제 모달 (거절 = 게임오버) */}
+          {rescue ? (
+            <div style={st.overlay}>
+              <div style={{ ...st.popup, borderColor: "#c64545" }} className="pop-in" data-testid="rescue-modal">
+                <div style={{ fontSize: 42 }}>🦈</div>
+                <h2 style={{ ...st.popupTitle, color: "#e07a6a", fontSize: 24 }}>미스터 핀의 마지막 제안</h2>
+                <p style={st.popupLine}>
+                  &ldquo;어이, 주머니가 텅텅이네? 마지막 제안이야.{" "}
+                  <strong style={{ color: "#f5c542" }}>{loanOffer(run).amount.toLocaleString()}</strong> 빌려서 한 번 더
+                  뛰거나, 여기서 곱게 접거나. 이자는{" "}
+                  <strong style={{ color: "#e07a6a" }}>+{loanOffer(run).perPlay}/기회</strong>… 어느 쪽이든 난
+                  이득이야.&rdquo;
+                </p>
+                <p style={{ ...st.popupLine, fontSize: 13, color: "#b8a58f" }} data-testid="rescue-honest">
+                  목표까지 순증가 +{Math.max(0, run.target - netWorth(run)).toLocaleString()} 필요 · 남은 기회{" "}
+                  {run.playsLeft}회 · 거절하면 여기서 게임 오버
+                </p>
+                <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 14, flexWrap: "wrap" }}>
+                  <button type="button" className="btn-gold" data-testid="rescue-accept" onClick={acceptLoan}>
+                    🦈 빚내서 달린다 +{loanOffer(run).amount.toLocaleString()}
+                  </button>
+                  <button type="button" className="btn-ghost" data-testid="rescue-decline" onClick={declineRescue}>
+                    여기까지. 접는다
+                  </button>
+                </div>
               </div>
             </div>
           ) : null}
@@ -372,7 +528,13 @@ export default function LuckyRun() {
           <div style={{ fontSize: 48 }}>{result.isNewBest ? "🏆" : "💸"}</div>
           <h1 style={{ ...st.logo, fontSize: 40 }}>게임 오버</h1>
           <p style={st.logoKo}>
-            {result.reason === "broke" ? "파산 — 티켓 한 장 살 코인이 없다" : "목표 미달 — 코인이 목표에 닿지 못했다"}
+            {result.reason === "broke"
+              ? result.hadDebt
+                ? "미스터 핀이 금고째 물고 갔습니다 — 오늘의 교훈: 이자는 항상 이긴다"
+                : "파산 — 티켓 한 장 살 코인이 없다"
+              : result.hadDebt
+                ? "목표 미달 — 빚을 빼면 목표에 닿지 못했다"
+                : "목표 미달 — 코인이 목표에 닿지 못했다"}
           </p>
 
           <div style={st.resultGrid} data-testid="result-grid">
@@ -535,6 +697,7 @@ const st: Record<string, React.CSSProperties> = {
     flexWrap: "wrap",
   },
   hudCoins: { fontSize: 20, fontWeight: 700, color: GOLD, whiteSpace: "nowrap" },
+  debtLine: { fontSize: 12, fontWeight: 700, color: "#e07a6a", marginTop: 3, whiteSpace: "nowrap" },
   hudCenter: { flex: 1, minWidth: 220 },
   hudRound: { fontSize: 12, letterSpacing: 2, color: "#d9c9ae", fontWeight: 700, marginBottom: 4 },
   targetBarWrap: {
@@ -617,6 +780,19 @@ const gameCss = `
   .btn-gold:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 1px 0 #8a6400; }
   .btn-gold:disabled { filter: grayscale(0.7) brightness(0.7); cursor: default; }
   .btn-big { font-size: 16px; padding: 15px 34px; }
+
+  .btn-shark {
+    font-family: ${SANS};
+    font-size: 13px; font-weight: 800;
+    color: #d9f5ec;
+    background: linear-gradient(180deg, #2e6e5e, #1d4a3f);
+    border: 1.5px solid #5db8a6; border-radius: 999px;
+    padding: 11px 18px; cursor: pointer;
+    transition: filter 0.15s, transform 0.1s;
+  }
+  .btn-shark:hover:not(:disabled) { filter: brightness(1.15); }
+  .btn-shark:active:not(:disabled) { transform: scale(0.97); }
+  .btn-shark:disabled { filter: grayscale(0.6) brightness(0.65); cursor: default; }
 
   .btn-ghost {
     font-family: ${SANS};
