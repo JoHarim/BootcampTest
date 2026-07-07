@@ -2,6 +2,11 @@
 > 방향을 정하거나 바꾼 결정을 위에서부터 쌓는다(최신이 위). 한 결정 = 4줄.
 > 왜 남기나: 2주 뒤의 나(와 새 AI 세션)가 "왜 이렇게 만들었지?"를 다시 고민하지 않게.
 
+## [2026-07-07] 배포는 정적 내보내기(output: export) + Netlify CLI
+- 왜: 앱이 서버 기능 없이 브라우저에서만 돌아서(localStorage) 정적 파일이면 충분. Netlify CLI가 이미 로그인돼 있어 무인 배포 가능.
+- 버린 대안: Vercel 웹 콘솔 Import(수동 단계 필요) / Netlify Next.js 런타임(서버 기능 없는데 무거움).
+- 영향: `apps/web/next.config.mjs`에 `output: "export"` 추가 → 빌드 시 `apps/web/out/` 생성 → `netlify deploy --prod --dir out`. 이후 서버 기능(API·SSR)을 쓰게 되면 이 설정을 빼고 배포 방식을 바꿔야 함.
+
 ## [2026-07-05] 저장은 브라우저(localStorage), Supabase를 쓰지 않는다
 - 왜: 첫 실습이라 로그인·키·계정 없이 바로 돌아가는 게 우선. 단일 사용자·개인용이라 클라우드가 필요 없음.
 - 버린 대안: Supabase 클라우드 저장 — 계정·키 준비가 한 단계 더 들어 첫 실습엔 부담.

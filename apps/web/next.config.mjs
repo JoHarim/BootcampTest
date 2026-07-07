@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // 정적 내보내기 — 이 앱은 서버 기능 없이 브라우저에서만 돈다(localStorage). 빌드하면 out/ 폴더가 생겨 정적 호스팅(Netlify 등)에 그대로 올린다.
+  output: "export",
   // 모노레포 루트를 명시 (상위 폴더에 다른 lockfile 이 있어도 헷갈리지 않게)
   outputFileTracingRoot: join(dirname(fileURLToPath(import.meta.url)), "../.."),
   // 밀키트 재료(packages/*)는 TypeScript 소스 그대로 가져다 쓴다 — Next가 대신 컴파일

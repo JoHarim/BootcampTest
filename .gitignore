@@ -10,6 +10,7 @@ node_modules/
 .next/
 dist/
 .turbo/
+out/
 .expo/
 
 # 진행상황 훅 산출물
