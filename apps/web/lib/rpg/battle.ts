@@ -1,5 +1,5 @@
 // 전투 엔진 — 순수 함수만(인자 불변). 난수는 시드 LCG로 결정적(재현 가능), Math.random 금지.
-// 계약: types.ts / 수치·공식: docs/plan/rpg-design.md 4장
+// 계약: types.ts / 수치·공식: docs/plan/rpg-design.md 4장 + 9장(십성 시너지)
 import type {
   BattleCommand,
   BattleEvent,
@@ -13,7 +13,7 @@ import type {
   Stats,
 } from "./types";
 import { elementMultiplier, statsAtLevel } from "./saju-engine";
-import { BRANCH_POOL, STEM_POOL } from "./content";
+import { BRANCH_POOL, STEM_POOL, SYNERGIES } from "./content";
 
 // ── 밸런스 상수 (설계서 4장) ──────────────────────────
 const BASE_MAX_HP = 40; // maxHp = 40 + hp×3 (시뮬 튜닝 2026-07-07: 60+×4는 무패 게임이라 하향)
@@ -26,6 +26,8 @@ const CRIT_BASE_PCT = 5; // 치명타 확률 = min(5 + luk×0.25, 35)%
 const CRIT_PER_LUK = 0.25; // 토(土) 점수가 구조적으로 높아 0.4면 전원 상한 도달
 const CRIT_MAX_PCT = 35;
 const CRIT_MULT = 1.6; // 치명타 배율
+const CRIT_SYNERGY_MAX_PCT = 50; // 재성 시너지 가산 포함 치명타 최종 상한 (설계서 9장)
+const GUARD_FLOOR = 0.6; // 관성 시너지 받는 피해 배율 하한 (아무리 쌓여도 ×0.6까지)
 const LCG_A = 1103515245; // seed = (seed×A + C) mod 2^31
 const LCG_C = 12345;
 const LCG_M = 2147483648; // 2^31
@@ -111,6 +113,7 @@ export function initBattle(
     job: c.job,
     skillCooldown: 0,
     fortune: f,
+    synergy: { ...c.tenGodCounts }, // 십성 시너지 집계 복사 (전투 중 불변, 설계서 9장)
     seed,
     over: false,
     won: false,
@@ -138,12 +141,14 @@ export function stepBattle(
 
   if (useSkill) {
     const skill = s.job.skill;
+    // 식상 시너지 — 스킬 위력(피해·회복 공통) ×(1 + unit%×n)
+    const synSkill = 1 + (SYNERGIES.식상.unit / 100) * s.synergy.식상;
     if (skill.kind === "damage") {
-      // 스킬 데미지 = int × power × 상성배율 (변동·치명타·방어 감산 없음)
+      // 스킬 데미지 = int × power × 식상 시너지 × 상성배율 (변동·치명타·방어 감산 없음)
       const mult = elementMultiplier(s.player.element, s.foe.element);
       const dmg = Math.max(
         MIN_DAMAGE,
-        Math.round(s.player.int * skill.power * mult),
+        Math.round(s.player.int * skill.power * synSkill * mult),
       );
       foeHp = Math.max(0, foeHp - dmg);
       events.push({
@@ -152,9 +157,9 @@ export function stepBattle(
         amount: dmg,
       });
     } else {
-      // 회복 = maxHp × power (최대 maxHp 클램프)
+      // 회복 = maxHp × power × 식상 시너지 (최대 maxHp 클램프)
       const healed = Math.min(
-        Math.round(s.player.maxHp * skill.power),
+        Math.round(s.player.maxHp * skill.power * synSkill),
         s.player.maxHp - playerHp,
       );
       playerHp += healed;
@@ -166,19 +171,24 @@ export function stepBattle(
     }
     cooldown = skill.cooldown; // 사용 직후 쿨다운 재설정
   } else {
-    // 기본공격 = atk × 상성 × 변동(0.9~1.1) − 상대 def×0.5, 최소 1
-    // 시드 소비 순서 고정: 변동 롤 → 치명 롤 (재현성)
+    // 기본공격 = atk × 상성 × 변동(0.9~1.1) × 비겁 시너지 − 상대 def 감산, 최소 1
+    // 시드 소비 순서 고정: 변동 롤 → 치명 롤 (재현성 — 시너지는 난수를 안 쓴다)
     const mult = elementMultiplier(s.player.element, s.foe.element);
     const varRoll = roll(seed);
     seed = varRoll.seed;
     const critRoll = roll(seed);
     seed = critRoll.seed;
+    // 재성 시너지 — 기존 상한(35) 계산 뒤 +unit%p×n 가산, 최종 상한 50
     const critPct = Math.min(
-      CRIT_BASE_PCT + s.player.luk * CRIT_PER_LUK,
-      CRIT_MAX_PCT,
+      Math.min(CRIT_BASE_PCT + s.player.luk * CRIT_PER_LUK, CRIT_MAX_PCT) +
+        SYNERGIES.재성.unit * s.synergy.재성,
+      CRIT_SYNERGY_MAX_PCT,
     );
     const isCrit = critRoll.value * 100 < critPct;
-    let raw = s.player.atk * mult * (VARIANCE_MIN + varRoll.value * VARIANCE_RANGE);
+    // 비겁 시너지 — 공격항에만 ×(1 + unit%×n), 방어 감산 전
+    const synAtk = 1 + (SYNERGIES.비겁.unit / 100) * s.synergy.비겁;
+    let raw =
+      s.player.atk * mult * (VARIANCE_MIN + varRoll.value * VARIANCE_RANGE) * synAtk;
     if (isCrit) {
       raw *= CRIT_MULT; // 치명타는 공격항에 ×1.6 (방어 감산 전)
     }
@@ -206,11 +216,17 @@ export function stepBattle(
     const mult = elementMultiplier(s.foe.element, s.player.element);
     const varRoll = roll(seed);
     seed = varRoll.seed;
+    // 관성 시너지 — 방어 감산 후 데미지에 ×max(1 − unit%×n, 하한 0.6)
+    const guard = Math.max(
+      1 - (SYNERGIES.관성.unit / 100) * s.synergy.관성,
+      GUARD_FLOOR,
+    );
     const dmg = Math.max(
       MIN_DAMAGE,
       Math.round(
-        s.foe.atk * mult * (VARIANCE_MIN + varRoll.value * VARIANCE_RANGE) -
-          s.player.def * DEF_REDUCE,
+        (s.foe.atk * mult * (VARIANCE_MIN + varRoll.value * VARIANCE_RANGE) -
+          s.player.def * DEF_REDUCE) *
+          guard,
       ),
     );
     playerHp = Math.max(0, playerHp - dmg);
@@ -223,6 +239,22 @@ export function stepBattle(
       over = true;
       won = false;
       events.push({ kind: "lose", text: "💀 쓰러졌다… 패배" });
+    }
+  }
+
+  // ── 인성 시너지 — 스텝 끝 회복 (전투 미종료·생존 시, 만피 클램프 후 실회복이 있을 때만) ──
+  if (!over && playerHp > 0 && s.synergy.인성 > 0) {
+    const regen = Math.min(
+      Math.round(s.player.maxHp * (SYNERGIES.인성.unit / 100) * s.synergy.인성),
+      s.player.maxHp - playerHp,
+    );
+    if (regen > 0) {
+      playerHp += regen;
+      events.push({
+        kind: "heal",
+        text: `${SYNERGIES.인성.emoji} ${SYNERGIES.인성.name} — HP ${regen} 회복`,
+        amount: regen,
+      });
     }
   }
 

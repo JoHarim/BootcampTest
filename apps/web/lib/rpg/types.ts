@@ -48,6 +48,17 @@ export type TenGodKey =
   | "비견" | "겁재" | "식신" | "상관" | "편재"
   | "정재" | "편관" | "정관" | "편인" | "정인";
 
+// 십성 5그룹 (시너지 집계 단위): 비겁=비견·겁재 / 식상=식신·상관 / 재성=편재·정재 / 관성=편관·정관 / 인성=편인·정인
+export type TenGodGroup = "비겁" | "식상" | "재성" | "관성" | "인성";
+
+// 시너지 정의 (content.ts SYNERGIES 데이터 — battle·UI 가 같은 소스를 소비한다)
+export interface SynergyDef {
+  name: string; // 예: "형제의 기세"
+  emoji: string;
+  unit: number; // 개수당 수치 (비겁·식상·관성 = %, 재성 = %p, 인성 = maxHp %)
+  descUnit: string; // UI 문구 틀 — 예: "기본공격 피해 +{u}%×{n}"
+}
+
 // ── 직업(격국) ────────────────────────────────────────
 export interface SkillDef {
   name: string;
@@ -80,6 +91,7 @@ export interface Character {
   stats: Stats; // 레벨 1 기준 (패시브 반영 전)
   job: JobClass;
   power: number; // 종합 전투력 (공개 화면 연출용, 정수)
+  tenGodCounts: Record<TenGodGroup, number>; // 십성 시너지 집계 — 일간 제외 천간 3 + 지지 본기 4, 빈 슬롯 미집계 (설계서 9장)
 }
 
 // 오늘의 기운 (일운) — PRD 5-8의 MVP 축소판
@@ -142,6 +154,7 @@ export interface BattleState {
   job: JobClass;
   skillCooldown: number; // 0이면 사용 가능
   fortune: DailyFortune | null;
+  synergy: Record<TenGodGroup, number>; // 십성 시너지 집계 (initBattle 에서 Character.tenGodCounts 복사)
   seed: number; // 결정적 난수 상태 (스텝마다 갱신)
   over: boolean;
   won: boolean;
@@ -168,11 +181,13 @@ export interface SaveData {
 //   export const DUNGEONS: Dungeon[]             // 오행별 5개
 //   export const STEM_POOL: Record<Element, string[]>    // 오행 → 천간 글자 풀
 //   export const BRANCH_POOL: Record<Element, string[]>  // 오행 → 지지 글자 풀
+//   export const SYNERGIES: Record<TenGodGroup, SynergyDef>  // 십성 시너지 데이터 (수치·이름 단일 소스, 설계서 9장)
 //   export function expForLevel(level: number): number   // 다음 레벨까지 필요 경험치
 //   export const MAX_LEVEL: number
 // saju-engine.ts:
 //   export function createCharacter(birthDate: string, birthTime: string): Character  // 모드 A. 실패 시 throw
 //   export function createCharacterFromSlots(dayGan: string, slots: LetterSlots): Character  // 모드 B. 빈 슬롯 0 기여, 스케일 ×6 고정, 월지 없으면 UNFORMED_JOB
+//   (두 생성 함수 모두 tenGodCounts 를 채운다 — 일간 제외 천간 3 + 지지 본기 4, 빈 슬롯 미집계)
 //   export function isStem(letter: string): boolean   // 천간이면 true, 지지면 false (미인식은 throw)
 //   export function getDailyFortune(c: Character, today: Date): DailyFortune
 //   export function statsAtLevel(base: Stats, level: number): Stats  // 레벨 성장 반영 (패시브 포함 전)

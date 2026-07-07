@@ -5,6 +5,8 @@ import type {
   Element,
   JobClass,
   Monster,
+  SynergyDef,
+  TenGodGroup,
   TenGodKey,
 } from "./types";
 
@@ -254,6 +256,16 @@ export const BRANCH_POOL: Record<Element, string[]> = {
   土: ["丑", "辰", "未", "戌"],
   金: ["申", "酉"],
   水: ["子", "亥"],
+};
+
+// ── 십성 시너지 데이터 (설계서 9장 — 수치·이름의 단일 소스, battle·UI 공용) ──
+// unit 의미: 비겁·식상 = 가산 % / 재성 = 치명타 %p / 관성 = 피해 감소 % / 인성 = 매 스텝 maxHp 회복 %
+export const SYNERGIES: Record<TenGodGroup, SynergyDef> = {
+  비겁: { name: "형제의 기세", emoji: "⚔️", unit: 6, descUnit: "기본공격 피해 +{u}%×{n}" },
+  식상: { name: "재주의 결", emoji: "🎨", unit: 8, descUnit: "스킬 위력 +{u}%×{n}" },
+  재성: { name: "재물의 눈", emoji: "💰", unit: 3, descUnit: "치명타 확률 +{u}%p×{n}" },
+  관성: { name: "법도의 갑주", emoji: "🛡️", unit: 4, descUnit: "받는 피해 −{u}%×{n}" },
+  인성: { name: "학문의 숨", emoji: "📜", unit: 1, descUnit: "매 턴 최대 생명력 {u}%×{n} 회복" },
 };
 
 // ── 던전 생성 헬퍼 (설계서 5장 공식 — 전부 결정적) ────────

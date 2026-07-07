@@ -14,8 +14,10 @@ import type {
   LetterSlots,
   PillarSlot,
   SaveData,
+  SynergyDef,
+  TenGodGroup,
 } from "../../lib/rpg/types";
-import { DUNGEONS, MAX_LEVEL, expForLevel } from "../../lib/rpg/content";
+import { DUNGEONS, MAX_LEVEL, SYNERGIES, expForLevel } from "../../lib/rpg/content";
 import {
   createCharacter,
   createCharacterFromSlots,
@@ -123,6 +125,21 @@ const ELEMENT_ORDER: Element[] = ["木", "火", "土", "金", "水"];
 const ELEMENT_STAT_KO: Record<Element, string> = {
   木: "체력", 火: "공격", 土: "운", 金: "방어", 水: "지능",
 };
+
+// 십성 5그룹 표시 순서 (시너지 카드·전투 컴팩트 표기 공용 — 설계서 9장 표 순)
+const TEN_GOD_GROUPS: TenGodGroup[] = ["비겁", "식상", "재성", "관성", "인성"];
+
+// 시너지 문구 — descUnit 의 {u}→개수당 수치, {n}→개수 치환 (예: "기본공격 피해 +6%×2")
+function synergyDescText(def: SynergyDef, n: number): string {
+  return def.descUnit.replace("{u}", String(def.unit)).replace("{n}", String(n));
+}
+
+// 시너지 합계 강조 — descUnit 의 "×{n}" 앞 수치 조각만 떼어 unit×n 합산값으로 변환 (예: "+{u}%×{n}" → "+12%")
+function synergyTotalText(def: SynergyDef, n: number): string {
+  const head = def.descUnit.split("×{n}")[0];
+  const tokens = head.split(" ");
+  return tokens[tokens.length - 1].replace("{u}", String(def.unit * n));
+}
 
 // BattleEvent.kind → 로그 색 (먹빛 카드 위 가독 톤)
 const LOG_COLOR: Record<BattleEvent["kind"], string> = {
@@ -790,6 +807,11 @@ function RevealView({ c, onStart }: { c: Character; onStart: () => void }) {
         <p style={styles.hintText}>💡 월지를 채우면 격국이 각성합니다</p>
       ) : null}
 
+      {/* 십성 시너지 — 여덟 글자 구성이 깨어난 결 (설계서 9장) */}
+      <div style={styles.sectionGap}>
+        <SynergyCard counts={c.tenGodCounts} />
+      </div>
+
       {/* 전투력 — 세리프 히어로 */}
       <p style={styles.caption}>종합 전투력</p>
       <p style={styles.powerHero}>{c.power}</p>
@@ -808,6 +830,39 @@ function Glyph({ ch, el }: { ch: string; el: Element }) {
       <span style={styles.glyphChar}>{ch}</span>
       <span style={{ ...styles.glyphEl, color: elementColor(el) }}>{elementKo(el)}</span>
     </div>
+  );
+}
+
+// ── 십성 시너지 카드 (reveal·home 공용) — n>0 그룹만, 수치·이름은 SYNERGIES 단일 소스 ──
+// 전부 0이면 모드 B 초기 상태뿐(모드 A는 최소 5글자 집계라 항상 1그룹 이상) → 수집 안내 문구.
+function SynergyCard({ counts }: { counts: Record<TenGodGroup, number> }) {
+  const active = TEN_GOD_GROUPS.filter((g) => counts[g] > 0);
+  return (
+    <>
+      <p style={styles.caption}>십성 시너지</p>
+      {active.length > 0 ? (
+        active.map((g) => {
+          const def = SYNERGIES[g];
+          const n = counts[g];
+          return (
+            <div key={g} style={styles.synergyRow}>
+              <span style={styles.synergyEmoji}>{def.emoji}</span>
+              <span style={{ flex: 1 }}>
+                <span style={styles.synergyName}>
+                  {def.name} <span style={styles.synergyCount}>×{n}</span>
+                </span>
+                <span style={styles.synergyDesc}>{synergyDescText(def, n)}</span>
+              </span>
+              <span style={styles.synergyTotal}>{synergyTotalText(def, n)}</span>
+            </div>
+          );
+        })
+      ) : (
+        <p style={{ ...styles.mutedText, margin: "8px 0 0" }}>
+          글자를 모으면 십성의 결이 깨어납니다
+        </p>
+      )}
+    </>
   );
 }
 
@@ -987,6 +1042,11 @@ function HomeView({
         </div>
       ) : null}
 
+      {/* 십성 시너지 — 모드 B는 장착·교체 시 createCharacterFromSlots 재계산으로 실시간 갱신 */}
+      <div style={styles.card}>
+        <SynergyCard counts={c.tenGodCounts} />
+      </div>
+
       {/* 오늘의 기운 */}
       {fortune !== null ? (
         <div style={{ ...styles.card, borderLeft: `4px solid ${elementColor(fortune.element)}` }}>
@@ -1119,6 +1179,8 @@ function BattleView({
   onSkill: () => void;
 }) {
   const skill = b.job.skill;
+  // 발동 중인 십성 시너지 그룹 (n>0) — 이모지 ×n 컴팩트 표기용
+  const activeSynergy = TEN_GOD_GROUPS.filter((g) => b.synergy[g] > 0);
   const skillDisabled = b.over || b.skillCooldown > 0 || pendingSkill;
   const skillLabel =
     b.skillCooldown > 0
@@ -1145,6 +1207,13 @@ function BattleView({
 
       {/* 오늘의 기운 버프 */}
       {b.fortune !== null ? <p style={styles.buffLine}>☀ {b.fortune.desc}</p> : null}
+
+      {/* 발동 중인 십성 시너지 — 이모지 ×n 한 줄 */}
+      {activeSynergy.length > 0 ? (
+        <p style={styles.synergyLine}>
+          ✦ {activeSynergy.map((g) => `${SYNERGIES[g].emoji}×${b.synergy[g]}`).join(" ")}
+        </p>
+      ) : null}
 
       {/* 턴 로그 — 최근 6줄, kind별 색 */}
       <div style={styles.logBox}>
@@ -1741,6 +1810,12 @@ const styles = {
     color: "#e8a55a", // accent-amber
     margin: "0 0 10px",
   } as const,
+  synergyLine: {
+    fontFamily: SANS,
+    fontSize: 12,
+    color: "#5db8a6", // 木 teal — 내 기운을 북돋는 결
+    margin: "0 0 10px",
+  } as const,
   logBox: {
     background: "#1f1e1b", // surface-dark-soft
     borderRadius: 8,
@@ -1867,6 +1942,41 @@ const styles = {
     fontSize: 12,
     fontWeight: 500,
     color: "#6c6a64",
+  } as const,
+
+  // 십성 시너지 카드 (reveal·home 공용)
+  synergyRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    background: "#faf9f5",
+    border: "1px solid #e6dfd8",
+    borderRadius: 8,
+    padding: "8px 12px",
+    marginTop: 6,
+  } as const,
+  synergyEmoji: { fontSize: 20, lineHeight: 1.2, flexShrink: 0 } as const,
+  synergyName: {
+    display: "block",
+    fontFamily: SANS,
+    fontSize: 14,
+    fontWeight: 500,
+    color: "#141413",
+  } as const,
+  synergyCount: { fontWeight: 400, color: "#8e8b82", fontSize: 12 } as const,
+  synergyDesc: {
+    display: "block",
+    fontFamily: SANS,
+    fontSize: 12,
+    color: "#8e8b82",
+    marginTop: 2,
+  } as const,
+  synergyTotal: {
+    fontFamily: SANS,
+    fontSize: 14,
+    fontWeight: 500,
+    color: "#cc785c", // 코랄 — 합계 강조
+    flexShrink: 0,
   } as const,
 
   // result — 획득 글자 칩 (모드 B)

@@ -13,6 +13,7 @@ import type {
   LetterSlots,
   StatKey,
   Stats,
+  TenGodGroup,
   TenGodKey,
 } from "./types";
 
@@ -129,6 +130,20 @@ const HIDDEN_STEMS: Record<string, string[]> = {
   亥: ["壬", "甲"],
 };
 
+// 십성 → 시너지 5그룹 (설계서 9장): 비견·겁재→비겁 / 식신·상관→식상 / 편재·정재→재성 / 편관·정관→관성 / 편인·정인→인성
+const TEN_GOD_GROUP: Record<TenGodKey, TenGodGroup> = {
+  비견: "비겁",
+  겁재: "비겁",
+  식신: "식상",
+  상관: "식상",
+  편재: "재성",
+  정재: "재성",
+  편관: "관성",
+  정관: "관성",
+  편인: "인성",
+  정인: "인성",
+};
+
 // 생(生): 木→火→土→金→水→木
 const PRODUCES: Record<Element, Element> = {
   木: "火",
@@ -223,6 +238,26 @@ function tenGodOf(dayGan: string, otherGan: string): TenGodKey {
   }
   // 나를 생하는 오행(인성)
   return sameYinYang ? "편인" : "정인";
+}
+
+// 십성 시너지 집계 (설계서 9장) — 일간 제외 천간 3(년·월·시) 그대로, 지지 4(년·월·일·시)는 본기로
+// 각각 일간 기준 십성을 뽑아 5그룹으로 묶는다. 빈 슬롯(null)은 미집계 — 두 생성 함수 공용.
+function countTenGods(dayGan: string, p: FourPillars): Record<TenGodGroup, number> {
+  const counts: Record<TenGodGroup, number> = { 비겁: 0, 식상: 0, 재성: 0, 관성: 0, 인성: 0 };
+
+  // 천간 3 — 그 글자 그대로 십성 판정
+  for (const gan of [p.year.gan, p.month.gan, p.time.gan]) {
+    if (gan !== null) {
+      counts[TEN_GOD_GROUP[tenGodOf(dayGan, gan)]] += 1;
+    }
+  }
+  // 지지 4 — 본기(지장간 첫 글자)로 십성 판정
+  for (const zhi of [p.year.zhi, p.month.zhi, p.day.zhi, p.time.zhi]) {
+    if (zhi !== null) {
+      counts[TEN_GOD_GROUP[tenGodOf(dayGan, HIDDEN_STEMS[zhi][0])]] += 1;
+    }
+  }
+  return counts;
 }
 
 // 사주 글자 오행 점수 — 자리별 가중치 합산 후 생극 보정 (설계서 1장)
@@ -371,6 +406,7 @@ export function createCharacter(birthDate: string, birthTime: string): Character
     stats,
     job,
     power,
+    tenGodCounts: countTenGods(dayMaster, pillars),
   };
 }
 
@@ -419,6 +455,7 @@ export function createCharacterFromSlots(dayGan: string, slots: LetterSlots): Ch
     stats,
     job,
     power,
+    tenGodCounts: countTenGods(dayGan, pillars),
   };
 }
 
