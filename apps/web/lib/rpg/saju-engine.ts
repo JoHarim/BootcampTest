@@ -1,16 +1,16 @@
 // 사주 RPG 엔진 — 생일 → 사주 4주 → 오행 점수 → 능력치·직업(격국)을 만드는 순수 함수 모음.
 // lunar-javascript(외부 라이브러리)는 rpg 모듈 중 이 파일에서만 import 한다 (플래너 lib/saju.ts 패턴).
-// 수치·공식은 docs/plan/rpg-design.md 1·2·3장을 따른다. 플래너와 결합하지 않도록 표는 자체 보유.
+// 수치·공식은 docs/plan/rpg-design.md 1·2·3·8장을 따른다. 플래너와 결합하지 않도록 표는 자체 보유.
 import pkg from "lunar-javascript";
 
-import { JOBS } from "./content";
+import { JOBS, UNFORMED_JOB } from "./content";
 import type {
   Character,
   DailyFortune,
   Element,
   ElementScore,
   FourPillars,
-  Pillar,
+  LetterSlots,
   StatKey,
   Stats,
   TenGodKey,
@@ -188,8 +188,9 @@ const ELEMENT_KO: Record<Element, string> = {
 
 // ── 내부 헬퍼 ─────────────────────────────────────────
 
-// '甲子' 같은 간지 2글자 → Pillar (모르는 글자면 throw)
-function toPillar(ganzhi: string): Pillar {
+// '甲子' 같은 간지 2글자 → 채워진 PillarSlot (모르는 글자면 throw)
+// 반환 타입을 non-null 로 좁혀 두면 일간(day.gan) 추출 시 null 검사가 필요 없다.
+function toPillar(ganzhi: string): { gan: string; zhi: string } {
   const gan = ganzhi[0];
   const zhi = ganzhi[1];
   if (STEM_ELEMENT[gan] === undefined || BRANCH_ELEMENT[zhi] === undefined) {
@@ -225,35 +226,38 @@ function tenGodOf(dayGan: string, otherGan: string): TenGodKey {
 }
 
 // 사주 글자 오행 점수 — 자리별 가중치 합산 후 생극 보정 (설계서 1장)
-// 시주가 null 이면 시간 천간·지지·지장간을 완전히 제외한다.
+// v2: 빈 슬롯(null)은 0 기여로 건너뛴다 — 모드 A 시각 미입력(time {null,null})과 모드 B 미장착 슬롯 공용.
+// 지장간은 채워진 지지만 기여한다. 자리별 가중치·생극 보정은 v1 과 동일.
 function computeElements(p: FourPillars): ElementScore {
   const base: ElementScore = { 木: 0, 火: 0, 土: 0, 金: 0, 水: 0 };
 
-  // 천간: 일간 ×2, 그 외 ×1
-  base[STEM_ELEMENT[p.day.gan]] += WEIGHT_DAY_GAN;
-  base[STEM_ELEMENT[p.year.gan]] += WEIGHT_OTHER_GAN;
-  base[STEM_ELEMENT[p.month.gan]] += WEIGHT_OTHER_GAN;
-
-  // 지지: 월지 ×3, 일지 ×2, 그 외 ×1.5
-  base[BRANCH_ELEMENT[p.month.zhi]] += WEIGHT_MONTH_ZHI;
-  base[BRANCH_ELEMENT[p.day.zhi]] += WEIGHT_DAY_ZHI;
-  base[BRANCH_ELEMENT[p.year.zhi]] += WEIGHT_OTHER_ZHI;
-
-  if (p.time !== null) {
-    base[STEM_ELEMENT[p.time.gan]] += WEIGHT_OTHER_GAN;
-    base[BRANCH_ELEMENT[p.time.zhi]] += WEIGHT_OTHER_ZHI;
-  }
-
-  // 지장간: 각 지지의 숨은 천간 ×0.5
-  const zhis = [p.year.zhi, p.month.zhi, p.day.zhi];
-  if (p.time !== null) {
-    zhis.push(p.time.zhi);
-  }
-  for (const zhi of zhis) {
-    for (const hidden of HIDDEN_STEMS[zhi]) {
-      base[STEM_ELEMENT[hidden]] += WEIGHT_HIDDEN;
+  // 천간 한 글자 가산 — null 이면 0 기여
+  const addGan = (gan: string | null, weight: number): void => {
+    if (gan !== null) {
+      base[STEM_ELEMENT[gan]] += weight;
     }
-  }
+  };
+  // 지지 한 글자 가산 + 그 지지의 지장간(숨은 천간 각 ×0.5) — null 이면 0 기여
+  const addZhi = (zhi: string | null, weight: number): void => {
+    if (zhi !== null) {
+      base[BRANCH_ELEMENT[zhi]] += weight;
+      for (const hidden of HIDDEN_STEMS[zhi]) {
+        base[STEM_ELEMENT[hidden]] += WEIGHT_HIDDEN;
+      }
+    }
+  };
+
+  // 천간: 일간 ×2, 그 외 ×1
+  addGan(p.day.gan, WEIGHT_DAY_GAN);
+  addGan(p.year.gan, WEIGHT_OTHER_GAN);
+  addGan(p.month.gan, WEIGHT_OTHER_GAN);
+  addGan(p.time.gan, WEIGHT_OTHER_GAN);
+
+  // 지지: 월지 ×3, 일지 ×2, 그 외 ×1.5 (지장간 포함)
+  addZhi(p.month.zhi, WEIGHT_MONTH_ZHI);
+  addZhi(p.day.zhi, WEIGHT_DAY_ZHI);
+  addZhi(p.year.zhi, WEIGHT_OTHER_ZHI);
+  addZhi(p.time.zhi, WEIGHT_OTHER_ZHI);
 
   // 생극 보정: 원점수 스냅샷 기준으로 상생 30% 가산·상극 20% 감산을 동시 적용
   const result: ElementScore = { ...base };
@@ -270,9 +274,9 @@ function computeElements(p: FourPillars): ElementScore {
   return result;
 }
 
-// 오행 점수 → 능력치 (설계서 2장): stat = round(16 + score × 계수), 시주 없으면 계수 보정
-function toStats(elements: ElementScore, hasTimePillar: boolean): Stats {
-  const scale = hasTimePillar ? STAT_SCALE : STAT_SCALE_NO_TIME;
+// 오행 점수 → 능력치 (설계서 2장): stat = round(16 + score × 계수)
+// 계수: 모드 A 시주 포함 ×6 / 시주 제외 ×7.5, 모드 B 는 항상 ×6 (설계서 8장)
+function toStats(elements: ElementScore, scale: number): Stats {
   return {
     hp: Math.round(STAT_BASE + elements["木"] * scale),
     atk: Math.round(STAT_BASE + elements["火"] * scale),
@@ -282,10 +286,21 @@ function toStats(elements: ElementScore, hasTimePillar: boolean): Stats {
   };
 }
 
+// 종합 전투력 (설계서 2장): power = hp×2 + atk×3 + def×2 + int×3 + luk×1
+function toPower(stats: Stats): number {
+  return Math.round(
+    stats.hp * POWER_WEIGHT.hp +
+      stats.atk * POWER_WEIGHT.atk +
+      stats.def * POWER_WEIGHT.def +
+      stats.int * POWER_WEIGHT.int +
+      stats.luk * POWER_WEIGHT.luk,
+  );
+}
+
 // ── 공개 API (types.ts 계약) ──────────────────────────
 
-// birthDate 'YYYY-MM-DD', birthTime 'HH:MM'|'' → 캐릭터 생성. 입력이 이상하면 throw.
-// birthTime 이 '' 이면 정오 더미로 계산하되 pillars.time = null (시주는 점수에서 완전 제외).
+// birthDate 'YYYY-MM-DD', birthTime 'HH:MM'|'' → 캐릭터 생성 (모드 A). 입력이 이상하면 throw.
+// birthTime 이 '' 이면 정오 더미로 계산하되 pillars.time = {null, null} (시주는 점수에서 완전 제외).
 export function createCharacter(birthDate: string, birthTime: string): Character {
   // 생년월일 파싱 (플래너와 동일 패턴)
   const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthDate);
@@ -325,29 +340,25 @@ export function createCharacter(birthDate: string, birthTime: string): Character
     .getLunar()
     .getEightChar();
 
+  const monthPillar = toPillar(eightChar.getMonth());
+  const dayPillar = toPillar(eightChar.getDay());
   const pillars: FourPillars = {
     year: toPillar(eightChar.getYear()),
-    month: toPillar(eightChar.getMonth()),
-    day: toPillar(eightChar.getDay()),
-    time: hour === null ? null : toPillar(eightChar.getTime()),
+    month: monthPillar,
+    day: dayPillar,
+    time: hour === null ? { gan: null, zhi: null } : toPillar(eightChar.getTime()),
   };
 
-  const dayMaster = pillars.day.gan;
+  const dayMaster = dayPillar.gan;
   const dayElement = STEM_ELEMENT[dayMaster];
 
-  // 오행 점수 → 능력치 → 전투력
+  // 오행 점수 → 능력치 → 전투력 (시주 유무 판정은 time.gan — v2 에서 time 은 항상 슬롯 객체)
   const elements = computeElements(pillars);
-  const stats = toStats(elements, pillars.time !== null);
-  const power = Math.round(
-    stats.hp * POWER_WEIGHT.hp +
-      stats.atk * POWER_WEIGHT.atk +
-      stats.def * POWER_WEIGHT.def +
-      stats.int * POWER_WEIGHT.int +
-      stats.luk * POWER_WEIGHT.luk,
-  );
+  const stats = toStats(elements, pillars.time.gan !== null ? STAT_SCALE : STAT_SCALE_NO_TIME);
+  const power = toPower(stats);
 
   // 격국(직업): 월지 본기(지장간 첫 글자) vs 일간의 십성 → JOBS 매핑
-  const monthMain = HIDDEN_STEMS[pillars.month.zhi][0];
+  const monthMain = HIDDEN_STEMS[monthPillar.zhi][0];
   const job = JOBS[tenGodOf(dayMaster, monthMain)];
 
   return {
@@ -361,6 +372,78 @@ export function createCharacter(birthDate: string, birthTime: string): Character
     job,
     power,
   };
+}
+
+// 일간 + 장착 슬롯 7개 → 캐릭터 생성 (모드 B, 설계서 8장). dayGan 이 천간이 아니면 throw.
+// 점수는 모드 A 와 같은 computeElements(빈 슬롯 0 기여), 스탯 계수는 항상 ×6 —
+// 7슬롯을 다 채우면 모드 A 8자와 수학적으로 동일해진다.
+export function createCharacterFromSlots(dayGan: string, slots: LetterSlots): Character {
+  if (STEM_ELEMENT[dayGan] === undefined) {
+    throw new Error("일간 글자를 인식하지 못했습니다.");
+  }
+  // 슬롯 자리 검증: 간 자리엔 천간만, 지 자리엔 지지만 (깨진 저장 데이터 방어)
+  for (const gan of [slots.yearGan, slots.monthGan, slots.timeGan]) {
+    if (gan !== null && STEM_ELEMENT[gan] === undefined) {
+      throw new Error("천간 슬롯 글자를 인식하지 못했습니다.");
+    }
+  }
+  for (const zhi of [slots.yearZhi, slots.monthZhi, slots.dayZhi, slots.timeZhi]) {
+    if (zhi !== null && BRANCH_ELEMENT[zhi] === undefined) {
+      throw new Error("지지 슬롯 글자를 인식하지 못했습니다.");
+    }
+  }
+
+  const pillars: FourPillars = {
+    year: { gan: slots.yearGan, zhi: slots.yearZhi },
+    month: { gan: slots.monthGan, zhi: slots.monthZhi },
+    day: { gan: dayGan, zhi: slots.dayZhi },
+    time: { gan: slots.timeGan, zhi: slots.timeZhi },
+  };
+
+  // 오행 점수 → 능력치 → 전투력 (계수는 슬롯 수와 무관하게 ×6 고정)
+  const elements = computeElements(pillars);
+  const stats = toStats(elements, STAT_SCALE);
+  const power = toPower(stats);
+
+  // 격국(직업): 월지가 있으면 본기 십성 → JOBS, 비어 있으면 무명객(無格) 폴백 — 월지 장착이 각성 마일스톤
+  const job =
+    slots.monthZhi !== null ? JOBS[tenGodOf(dayGan, HIDDEN_STEMS[slots.monthZhi][0])] : UNFORMED_JOB;
+
+  return {
+    birthDate: "",
+    birthTime: "",
+    pillars,
+    dayMaster: dayGan,
+    dayElement: STEM_ELEMENT[dayGan],
+    elements,
+    stats,
+    job,
+    power,
+  };
+}
+
+// 글자 분류 — 천간이면 true, 지지면 false, 미인식은 throw (모드 B 장착 자리 판별용)
+export function isStem(letter: string): boolean {
+  if (STEM_ELEMENT[letter] !== undefined) {
+    return true;
+  }
+  if (BRANCH_ELEMENT[letter] !== undefined) {
+    return false;
+  }
+  throw new Error("사주 글자를 인식하지 못했습니다.");
+}
+
+// 천간/지지 글자 → 오행, 미인식은 throw (드랍 글자 색·필터 표시용)
+export function letterElement(letter: string): Element {
+  const stemElement = STEM_ELEMENT[letter];
+  if (stemElement !== undefined) {
+    return stemElement;
+  }
+  const branchElement = BRANCH_ELEMENT[letter];
+  if (branchElement !== undefined) {
+    return branchElement;
+  }
+  throw new Error("사주 글자를 인식하지 못했습니다.");
 }
 
 // 오늘의 기운(일운) — 오늘 일진 천간의 오행에 해당하는 스탯 +15% (설계서 4장)

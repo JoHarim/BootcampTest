@@ -11,18 +11,21 @@ import type {
   DailyFortune,
   Dungeon,
   Element,
-  Pillar,
+  LetterSlots,
+  PillarSlot,
   SaveData,
 } from "../../lib/rpg/types";
 import { DUNGEONS, MAX_LEVEL, expForLevel } from "../../lib/rpg/content";
 import {
   createCharacter,
+  createCharacterFromSlots,
   elementColor,
   elementKo,
   elementMultiplier,
   getDailyFortune,
+  isStem,
 } from "../../lib/rpg/saju-engine";
-import { initBattle, stepBattle } from "../../lib/rpg/battle";
+import { initBattle, rollLetterDrop, stepBattle } from "../../lib/rpg/battle";
 
 // ── 저장 키 · UI 상수 (튜닝은 여기서) ─────────────────────
 const RPG_KEY = "sajuweb:rpg"; // RPG 진행 저장
@@ -46,6 +49,74 @@ const ZHI_ELEMENT: Record<string, Element> = {
   子: "水", 丑: "土", 寅: "木", 卯: "木", 辰: "土", 巳: "火",
   午: "火", 未: "土", 申: "金", 酉: "金", 戌: "土", 亥: "水",
 };
+
+// 천간 10글자 (모드 B 일간 선택 그리드 순서) + 한글 음 (표시용)
+const STEMS: string[] = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"];
+const STEM_KO_UI: Record<string, string> = {
+  甲: "갑", 乙: "을", 丙: "병", 丁: "정", 戊: "무",
+  己: "기", 庚: "경", 辛: "신", 壬: "임", 癸: "계",
+};
+// 지지 12글자 (글자 주머니 칩 정렬용)
+const BRANCHES: string[] = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"];
+
+// 모드 B 장착 슬롯 7종 — 순회·파싱·종류(천간/지지) 검증용 표 데이터
+const SLOT_KEYS: (keyof LetterSlots)[] = [
+  "yearGan", "yearZhi", "monthGan", "monthZhi", "dayZhi", "timeGan", "timeZhi",
+];
+const SLOT_IS_STEM: Record<keyof LetterSlots, boolean> = {
+  yearGan: true, yearZhi: false, monthGan: true, monthZhi: false,
+  dayZhi: false, timeGan: true, timeZhi: false,
+};
+// 사주판 4열 구성 — gan 이 null 인 열은 일간 고정 칸 (교체 불가)
+const BOARD_COLS: { label: string; gan: keyof LetterSlots | null; zhi: keyof LetterSlots }[] = [
+  { label: "연주", gan: "yearGan", zhi: "yearZhi" },
+  { label: "월주", gan: "monthGan", zhi: "monthZhi" },
+  { label: "일주", gan: null, zhi: "dayZhi" },
+  { label: "시주", gan: "timeGan", zhi: "timeZhi" },
+];
+
+// 모드 B 시작 상태 — 일간 제외 7칸 전부 공백
+function emptySlots(): LetterSlots {
+  return {
+    yearGan: null, yearZhi: null, monthGan: null, monthZhi: null,
+    dayZhi: null, timeGan: null, timeZhi: null,
+  };
+}
+
+// 저장 손상 방어 — slots 값은 문자열|null 만 수용 (그 외 타입은 빈 슬롯으로)
+function parseSlots(raw: unknown): LetterSlots {
+  const slots = emptySlots();
+  if (typeof raw !== "object" || raw === null) {
+    return slots;
+  }
+  const src = raw as Record<string, unknown>;
+  for (const key of SLOT_KEYS) {
+    const v = src[key];
+    if (typeof v === "string") {
+      slots[key] = v;
+    }
+  }
+  return slots;
+}
+
+// 저장 손상 방어 — inventory 는 문자열 배열만 수용 (문자열 아닌 원소는 버림)
+function parseInventory(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const out: string[] = [];
+  for (const v of raw) {
+    if (typeof v === "string") {
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+// 한자 1글자 → 오행 (칩·슬롯 표시용 — 미인식 글자는 undefined 로 두고 호출부에서 폴백)
+function letterEl(ch: string): Element | undefined {
+  return GAN_ELEMENT[ch] ?? ZHI_ELEMENT[ch];
+}
 
 // 오행 표시 순서(상생 순) + 오행 → 담당 스탯 한글
 const ELEMENT_ORDER: Element[] = ["木", "火", "土", "金", "水"];
@@ -79,6 +150,7 @@ interface ResultInfo {
   expGained: number;
   levelsGained: number;
   levelAfter: number;
+  letters: string[]; // 모드 B 승리 보상 글자 (모드 A·패배는 빈 배열)
 }
 
 export default function RpgPage() {
@@ -116,15 +188,13 @@ export default function RpgPage() {
       // 못 읽으면 버튼만 안 보일 뿐 — 무시
     }
 
-    // RPG 진행 저장
+    // RPG 진행 저장 — v2. 구버전(mode 필드 없음)은 mode "A"·dayGan ""·slots null·inventory [] 로 보정해 읽는다.
     let loaded: SaveData | null = null;
     try {
       const raw = window.localStorage.getItem(RPG_KEY);
       if (raw !== null) {
         const p = JSON.parse(raw) as Partial<SaveData>;
         if (
-          typeof p.birthDate === "string" && p.birthDate !== "" &&
-          typeof p.birthTime === "string" &&
           typeof p.level === "number" && typeof p.exp === "number" &&
           typeof p.clearedStages === "object" && p.clearedStages !== null
         ) {
@@ -136,13 +206,37 @@ export default function RpgPage() {
               cleared[key] = rawCleared[key] as number;
             }
           }
-          loaded = {
-            birthDate: p.birthDate,
-            birthTime: p.birthTime,
-            level: p.level,
-            exp: p.exp,
-            clearedStages: cleared,
-          };
+          const mode: "A" | "B" = p.mode === "B" ? "B" : "A";
+          if (mode === "B") {
+            if (typeof p.dayGan === "string" && p.dayGan !== "") {
+              loaded = {
+                mode: "B",
+                birthDate: "",
+                birthTime: "",
+                dayGan: p.dayGan,
+                slots: parseSlots(p.slots),
+                inventory: parseInventory(p.inventory),
+                level: p.level,
+                exp: p.exp,
+                clearedStages: cleared,
+              };
+            }
+          } else if (
+            typeof p.birthDate === "string" && p.birthDate !== "" &&
+            typeof p.birthTime === "string"
+          ) {
+            loaded = {
+              mode: "A",
+              birthDate: p.birthDate,
+              birthTime: p.birthTime,
+              dayGan: "",
+              slots: null,
+              inventory: [],
+              level: p.level,
+              exp: p.exp,
+              clearedStages: cleared,
+            };
+          }
         }
       }
     } catch {
@@ -154,18 +248,28 @@ export default function RpgPage() {
       return;
     }
     try {
-      // 저장된 생일로 캐릭터 재구성 — 생일이 바뀌었다면 create에서 새 SaveData로 재생성된다
-      const c = createCharacter(loaded.birthDate, loaded.birthTime);
+      // 저장 모드에 맞춰 캐릭터 재구성 — A 는 생일에서, B 는 일간+장착 슬롯에서
+      const c =
+        loaded.mode === "B" && loaded.slots !== null
+          ? createCharacterFromSlots(loaded.dayGan, loaded.slots)
+          : createCharacter(loaded.birthDate, loaded.birthTime);
       setCharacter(c);
       setSave(loaded);
       setFortune(getDailyFortune(c, new Date()));
       setView("home");
     } catch {
       setView("create"); // 저장은 있지만 계산 실패 → 재입력
+      return;
+    }
+    // 구버전(mode 없음) 저장도 읽은 즉시 v2 형태로 다시 쓴다 — 이후 저장은 항상 v2
+    try {
+      window.localStorage.setItem(RPG_KEY, JSON.stringify(loaded));
+    } catch {
+      // 못 써도 다음 저장 시점에 v2 로 통일된다 — 무시
     }
   }, []);
 
-  // create 제출 → 캐릭터 생성 + 저장. 실패 시 에러 문구 반환(성공은 "").
+  // create 제출(모드 A) → 캐릭터 생성 + 저장. 실패 시 에러 문구 반환(성공은 "").
   function handleCreate(birthDate: string, birthTime: string): string {
     let c: Character;
     try {
@@ -173,11 +277,21 @@ export default function RpgPage() {
     } catch {
       return "사주를 계산하지 못했어요. 생년월일을 확인해주세요";
     }
-    // 생일이 저장값과 같으면 진행도 유지, 다르면 새 캐릭터로 재생성
+    // 같은 모드 A·같은 생일이면 진행도 유지, 다르면 새 캐릭터로 재생성
     const next: SaveData =
-      save !== null && save.birthDate === birthDate && save.birthTime === birthTime
+      save !== null && save.mode === "A" && save.birthDate === birthDate && save.birthTime === birthTime
         ? save
-        : { birthDate, birthTime, level: 1, exp: 0, clearedStages: {} };
+        : {
+            mode: "A",
+            birthDate,
+            birthTime,
+            dayGan: "",
+            slots: null,
+            inventory: [],
+            level: 1,
+            exp: 0,
+            clearedStages: {},
+          };
     try {
       window.localStorage.setItem(RPG_KEY, JSON.stringify(next));
     } catch {
@@ -189,6 +303,75 @@ export default function RpgPage() {
     setResult(null);
     setView("reveal");
     return "";
+  }
+
+  // create 제출(모드 B) → 고른 일간으로 즉시 캐릭터 생성. 저장 슬롯은 1개 — 모드 B 선택은 항상 새 캐릭터.
+  function handleCreateB(dayGan: string): string {
+    const slots = emptySlots();
+    let c: Character;
+    try {
+      c = createCharacterFromSlots(dayGan, slots);
+    } catch {
+      return "캐릭터를 만들지 못했어요. 다시 시도해주세요";
+    }
+    const next: SaveData = {
+      mode: "B",
+      birthDate: "",
+      birthTime: "",
+      dayGan,
+      slots,
+      inventory: [],
+      level: 1,
+      exp: 0,
+      clearedStages: {},
+    };
+    try {
+      window.localStorage.setItem(RPG_KEY, JSON.stringify(next));
+    } catch {
+      return "저장에 실패했어요. 다시 눌러주세요";
+    }
+    setCharacter(c);
+    setSave(next);
+    setFortune(getDailyFortune(c, new Date()));
+    setResult(null);
+    setView("reveal");
+    return "";
+  }
+
+  // 모드 B 장착·교체 — 인벤 글자 하나를 슬롯에 넣고 캐릭터 즉시 재계산(레벨·경험치·클리어 유지, 저장)
+  function handleEquip(slotKey: keyof LetterSlots, letter: string) {
+    if (save === null || save.mode !== "B" || save.slots === null) return;
+    // 종류 검증 — 천간 글자는 간 자리, 지지 글자는 지 자리에만
+    let stem: boolean;
+    try {
+      stem = isStem(letter);
+    } catch {
+      return; // 미인식 글자 — 무시
+    }
+    if (stem !== SLOT_IS_STEM[slotKey]) return;
+    const inventory = [...save.inventory];
+    const idx = inventory.indexOf(letter);
+    if (idx === -1) return; // 인벤에 없는 글자 — 무시
+    inventory.splice(idx, 1);
+    const prev = save.slots[slotKey];
+    if (prev !== null) {
+      inventory.push(prev); // 교체 — 기존 글자는 인벤 복귀
+    }
+    const slots: LetterSlots = { ...save.slots, [slotKey]: letter };
+    let c: Character;
+    try {
+      c = createCharacterFromSlots(save.dayGan, slots);
+    } catch {
+      return; // 재계산 실패 — 장착 자체를 취소 (원상 유지)
+    }
+    const next: SaveData = { ...save, slots, inventory };
+    try {
+      window.localStorage.setItem(RPG_KEY, JSON.stringify(next));
+    } catch {
+      // 저장 실패해도 이번 세션 진행은 유지
+    }
+    setSave(next);
+    setCharacter(c);
   }
 
   // 전투 시작 — 시드는 현재 시각 기반(결정적 LCG의 초기값일 뿐, Math.random 아님)
@@ -210,13 +393,14 @@ export default function RpgPage() {
     setView("battle");
   }
 
-  // 전투 종료 처리 — 승리면 경험치·레벨업·클리어 기록 반영 후 저장, 잠시 뒤 result로
+  // 전투 종료 처리 — 승리면 경험치·레벨업·클리어 기록(모드 B는 글자 드랍까지) 반영 후 저장, 잠시 뒤 result로
   function finishBattle(finalState: BattleState) {
     let info: ResultInfo = {
       won: finalState.won,
       expGained: 0,
       levelsGained: 0,
       levelAfter: save !== null ? save.level : 1,
+      letters: [],
     };
     if (finalState.won && save !== null && dungeon !== null) {
       const m = dungeon.stages[stageIdx];
@@ -233,14 +417,21 @@ export default function RpgPage() {
       if (stageIdx + 1 > prevBest) {
         cleared[dungeon.id] = stageIdx + 1;
       }
-      const next: SaveData = { ...save, level, exp, clearedStages: cleared };
+      // 모드 B 승리 보상 — 전투 종료 시점 시드를 이어받아 글자 드랍(일반 1·보스 2)
+      let inventory = save.inventory;
+      let letters: string[] = [];
+      if (save.mode === "B") {
+        letters = rollLetterDrop(dungeon.element, m.isBoss, finalState.seed).letters;
+        inventory = [...save.inventory, ...letters];
+      }
+      const next: SaveData = { ...save, level, exp, clearedStages: cleared, inventory };
       try {
         window.localStorage.setItem(RPG_KEY, JSON.stringify(next));
       } catch {
         // 저장 실패해도 이번 세션 진행은 유지
       }
       setSave(next);
-      info = { won: true, expGained: m.exp, levelsGained: ups, levelAfter: level };
+      info = { won: true, expGained: m.exp, levelsGained: ups, levelAfter: level, letters };
     }
     setResult(info);
     finishTimerRef.current = window.setTimeout(() => {
@@ -290,7 +481,12 @@ export default function RpgPage() {
         ) : null}
 
         {view === "create" ? (
-          <CreateView planner={plannerProfile} onSubmit={handleCreate} />
+          <CreateView
+            planner={plannerProfile}
+            initialMode={save !== null ? save.mode : "A"}
+            onSubmit={handleCreate}
+            onSubmitB={handleCreateB}
+          />
         ) : null}
 
         {view === "reveal" && character !== null ? (
@@ -308,6 +504,7 @@ export default function RpgPage() {
             }}
             onReveal={() => setView("reveal")}
             onRecreate={() => setView("create")}
+            onEquip={handleEquip}
           />
         ) : null}
 
@@ -352,14 +549,19 @@ export default function RpgPage() {
   );
 }
 
-// ── create: 생년월일 입력 ─────────────────────────────────
+// ── create: 모드 선택 (A 생년월일 입력 / B 일간 10택) ─────
 function CreateView({
   planner,
+  initialMode,
   onSubmit,
+  onSubmitB,
 }: {
   planner: PlannerProfile | null;
+  initialMode: "A" | "B";
   onSubmit: (birthDate: string, birthTime: string) => string;
+  onSubmitB: (dayGan: string) => string;
 }) {
+  const [mode, setMode] = useState<"A" | "B">(initialMode);
   const [birthDate, setBirthDate] = useState<string>("");
   const [birthTime, setBirthTime] = useState<string>("");
   const [error, setError] = useState<string>("");
@@ -395,61 +597,130 @@ function CreateView({
   return (
     <div style={styles.card}>
       <p style={styles.caption}>SAJU RPG</p>
-      <h1 style={styles.title}>내 사주로 캐릭터 만들기</h1>
-      <p style={styles.bodyText}>
-        생년월일이 곧 능력치가 됩니다. 오행 상성을 골라가며 던전 5종을 정복해보세요.
-      </p>
+      <h1 style={styles.title}>캐릭터 만들기</h1>
 
-      <label style={styles.label}>
-        생년월일 (필수)
-        <input
-          type="date"
-          value={birthDate}
-          onChange={(e) => setBirthDate(e.target.value)}
-          className="rpg-input"
-        />
-      </label>
-
-      <label style={styles.label}>
-        태어난 시각 (선택 · 모르면 비워두세요)
-        <input
-          type="time"
-          value={birthTime}
-          onChange={(e) => setBirthTime(e.target.value)}
-          className="rpg-input"
-        />
-      </label>
-
-      {planner !== null ? (
+      {/* 모드 선택 2카드 — 저장 슬롯은 1개라 모드 전환 = 새 캐릭터 */}
+      <div style={styles.modeGrid}>
         <button
           type="button"
-          className="rpg-btn secondary"
+          className={mode === "A" ? "rpg-mode-btn on" : "rpg-mode-btn"}
           onClick={() => {
-            setBirthDate(planner.birthDate);
-            setBirthTime(planner.birthTime);
+            setMode("A");
             setError("");
           }}
         >
-          플래너에 저장된 생일 불러오기
+          <span style={styles.modeEmoji}>🔮</span>
+          <span style={styles.modeName}>내 사주로 시작</span>
+          <span style={styles.modeDesc}>생년월일이 곧 능력치</span>
         </button>
-      ) : null}
+        <button
+          type="button"
+          className={mode === "B" ? "rpg-mode-btn on" : "rpg-mode-btn"}
+          onClick={() => {
+            setMode("B");
+            setError("");
+          }}
+        >
+          <span style={styles.modeEmoji}>🎴</span>
+          <span style={styles.modeName}>사주 수집</span>
+          <span style={styles.modeDesc}>일간 하나로 시작해 여덟 글자를 모아라</span>
+        </button>
+      </div>
+      <p style={styles.mutedText}>저장 슬롯은 하나 — 모드를 바꾸면 새 캐릭터가 됩니다</p>
 
-      {error !== "" ? <p style={styles.error}>{error}</p> : null}
+      {mode === "A" ? (
+        <>
+          <p style={styles.bodyText}>
+            생년월일이 곧 능력치가 됩니다. 오행 상성을 골라가며 던전 5종을 정복해보세요.
+          </p>
 
-      <button type="button" onClick={handleStart} className="rpg-btn">
-        캐릭터 생성
-      </button>
+          <label style={styles.label}>
+            생년월일 (필수)
+            <input
+              type="date"
+              value={birthDate}
+              onChange={(e) => setBirthDate(e.target.value)}
+              className="rpg-input"
+            />
+          </label>
+
+          <label style={styles.label}>
+            태어난 시각 (선택 · 모르면 비워두세요)
+            <input
+              type="time"
+              value={birthTime}
+              onChange={(e) => setBirthTime(e.target.value)}
+              className="rpg-input"
+            />
+          </label>
+
+          {planner !== null ? (
+            <button
+              type="button"
+              className="rpg-btn secondary"
+              onClick={() => {
+                setBirthDate(planner.birthDate);
+                setBirthTime(planner.birthTime);
+                setError("");
+              }}
+            >
+              플래너에 저장된 생일 불러오기
+            </button>
+          ) : null}
+
+          {error !== "" ? <p style={styles.error}>{error}</p> : null}
+
+          <button type="button" onClick={handleStart} className="rpg-btn">
+            캐릭터 생성
+          </button>
+        </>
+      ) : (
+        <>
+          <p style={styles.bodyText}>
+            나의 근본이 될 일간을 하나 고르면 바로 시작합니다. 던전에서 글자를 모아 나머지 일곱
+            자리를 채워보세요.
+          </p>
+
+          {/* 일간 10택 그리드 — 선택 즉시 캐릭터 생성 */}
+          <div style={styles.stemGrid}>
+            {STEMS.map((st) => {
+              const el = GAN_ELEMENT[st];
+              return (
+                <button
+                  key={st}
+                  type="button"
+                  className="rpg-stem-btn"
+                  style={{ border: `2px solid ${elementColor(el)}` }}
+                  onClick={() => {
+                    const failMsg = onSubmitB(st);
+                    if (failMsg !== "") {
+                      setError(failMsg);
+                    }
+                  }}
+                >
+                  <span style={styles.stemChar}>{st}</span>
+                  <span style={{ ...styles.stemKo, color: elementColor(el) }}>
+                    {STEM_KO_UI[st]}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {error !== "" ? <p style={styles.error}>{error}</p> : null}
+        </>
+      )}
     </div>
   );
 }
 
 // ── reveal: 사주 8자 + 오행 바 + 직업 + 전투력 ────────────
 function RevealView({ c, onStart }: { c: Character; onStart: () => void }) {
-  const cols: { label: string; pillar: Pillar | null }[] = [
-    { label: "연주", pillar: c.pillars.year },
-    { label: "월주", pillar: c.pillars.month },
-    { label: "일주", pillar: c.pillars.day },
-    { label: "시주", pillar: c.pillars.time },
+  const cols: { label: string; slot: PillarSlot }[] = [
+    { label: "연주", slot: c.pillars.year },
+    { label: "월주", slot: c.pillars.month },
+    { label: "일주", slot: c.pillars.day },
+    { label: "시주", slot: c.pillars.time },
   ];
   const maxScore = Math.max(...ELEMENT_ORDER.map((e) => c.elements[e]), 1);
 
@@ -458,21 +729,20 @@ function RevealView({ c, onStart }: { c: Character; onStart: () => void }) {
       <p style={styles.caption}>캐릭터 각성</p>
       <h1 style={styles.title}>당신의 사주 여덟 글자</h1>
 
-      {/* 4주 8자 카드 — 글자별 오행색 테두리 */}
+      {/* 4주 8자 카드 — 글자별 오행색 테두리, 빈 슬롯(모드 A 시주 미입력·모드 B 미장착)은 ? 카드 */}
       <div style={styles.pillarGrid}>
         {cols.map((col) => (
           <div key={col.label} style={styles.pillarCol}>
             <span style={styles.pillarLabel}>{col.label}</span>
-            {col.pillar !== null ? (
-              <>
-                <Glyph ch={col.pillar.gan} el={GAN_ELEMENT[col.pillar.gan] ?? c.dayElement} />
-                <Glyph ch={col.pillar.zhi} el={ZHI_ELEMENT[col.pillar.zhi] ?? c.dayElement} />
-              </>
+            {col.slot.gan !== null ? (
+              <Glyph ch={col.slot.gan} el={GAN_ELEMENT[col.slot.gan] ?? c.dayElement} />
             ) : (
-              <>
-                <div style={styles.glyphEmpty}>?</div>
-                <div style={styles.glyphEmpty}>?</div>
-              </>
+              <div style={styles.glyphEmpty}>?</div>
+            )}
+            {col.slot.zhi !== null ? (
+              <Glyph ch={col.slot.zhi} el={ZHI_ELEMENT[col.slot.zhi] ?? c.dayElement} />
+            ) : (
+              <div style={styles.glyphEmpty}>?</div>
             )}
           </div>
         ))}
@@ -515,6 +785,11 @@ function RevealView({ c, onStart }: { c: Character; onStart: () => void }) {
         </div>
       </div>
 
+      {/* 모드 B 무명객(無格) — 각성 조건 한 줄 안내 */}
+      {c.job.tenGod === null ? (
+        <p style={styles.hintText}>💡 월지를 채우면 격국이 각성합니다</p>
+      ) : null}
+
       {/* 전투력 — 세리프 히어로 */}
       <p style={styles.caption}>종합 전투력</p>
       <p style={styles.powerHero}>{c.power}</p>
@@ -536,7 +811,7 @@ function Glyph({ ch, el }: { ch: string; el: Element }) {
   );
 }
 
-// ── home: 허브 (요약·오늘의 기운·던전 입장·면책) ──────────
+// ── home: 허브 (요약·[모드 B]사주판·글자 주머니·오늘의 기운·던전 입장·면책) ──────────
 function HomeView({
   c,
   save,
@@ -544,6 +819,7 @@ function HomeView({
   onDungeon,
   onReveal,
   onRecreate,
+  onEquip,
 }: {
   c: Character;
   save: SaveData;
@@ -551,10 +827,77 @@ function HomeView({
   onDungeon: (d: Dungeon) => void;
   onReveal: () => void;
   onRecreate: () => void;
+  onEquip: (slotKey: keyof LetterSlots, letter: string) => void;
 }) {
+  // 모드 B 장착 흐름: 칩 탭(선택) → 같은 종류(천간/지지) 슬롯 하이라이트 → 슬롯 탭(장착). 칩 재탭 = 취소.
+  const [selLetter, setSelLetter] = useState<string | null>(null);
+
   const maxed = save.level >= MAX_LEVEL;
   const need = expForLevel(save.level);
   const expPct = maxed ? 100 : Math.min((save.exp / need) * 100, 100);
+
+  const slots = save.slots;
+  const selIsStem = selLetter !== null ? isStem(selLetter) : false;
+  // 글자 주머니 — 글자별 개수 집계 (표시는 천간→지지 정순, 미인식 글자는 숨김)
+  const counts = new Map<string, number>();
+  if (save.mode === "B") {
+    for (const ch of save.inventory) {
+      counts.set(ch, (counts.get(ch) ?? 0) + 1);
+    }
+  }
+  const chipLetters = [...STEMS, ...BRANCHES].filter((ch) => counts.has(ch));
+  const complete = slots !== null && SLOT_KEYS.every((k) => slots[k] !== null);
+
+  // 사주판 슬롯 1칸 — 채워진 칸은 오행색 테두리, 빈 칸은 ?, 하이라이트 시 탭하면 장착(교체)
+  function renderSlot(slotKey: keyof LetterSlots) {
+    if (slots === null) return null;
+    const letter = slots[slotKey];
+    const targetable = selLetter !== null && selIsStem === SLOT_IS_STEM[slotKey];
+    const el = letter !== null ? letterEl(letter) ?? c.dayElement : null;
+    let borderColor = "#e6dfd8";
+    let borderStyle = "dashed";
+    if (letter !== null && el !== null) {
+      borderColor = elementColor(el);
+      borderStyle = "solid";
+    }
+    if (targetable) {
+      borderColor = "#cc785c";
+    }
+    return (
+      <button
+        type="button"
+        className={targetable ? "rpg-slot-btn target" : "rpg-slot-btn"}
+        disabled={!targetable}
+        style={{ border: `2px ${borderStyle} ${borderColor}` }}
+        onClick={() => {
+          if (selLetter !== null) {
+            onEquip(slotKey, selLetter);
+            setSelLetter(null);
+          }
+        }}
+      >
+        {letter !== null && el !== null ? (
+          <>
+            <span style={styles.slotChar}>{letter}</span>
+            {targetable ? (
+              <span style={styles.slotHint}>여기에 장착</span>
+            ) : (
+              <span style={{ ...styles.slotEl, color: elementColor(el) }}>{elementKo(el)}</span>
+            )}
+          </>
+        ) : (
+          <>
+            <span style={styles.slotEmptyChar}>?</span>
+            {targetable ? (
+              <span style={styles.slotHint}>여기에 장착</span>
+            ) : (
+              <span style={{ ...styles.slotEl, color: "#c9c4bb" }}>비어 있음</span>
+            )}
+          </>
+        )}
+      </button>
+    );
+  }
 
   return (
     <>
@@ -577,6 +920,72 @@ function HomeView({
           </div>
         </div>
       </div>
+
+      {/* [모드 B] 사주판 — 4주×(천간/지지) 8칸, 일간은 고정 칸 + 글자 주머니 */}
+      {save.mode === "B" && slots !== null ? (
+        <div style={styles.card}>
+          <div style={styles.boardHead}>
+            <p style={{ ...styles.caption, margin: 0 }}>사주판</p>
+            {complete ? <span style={styles.completeBadge}>✦ 팔자 완성</span> : null}
+          </div>
+          <div style={styles.pillarGrid}>
+            {BOARD_COLS.map((col) => (
+              <div key={col.label} style={styles.pillarCol}>
+                <span style={styles.pillarLabel}>{col.label}</span>
+                {col.gan !== null ? (
+                  renderSlot(col.gan)
+                ) : (
+                  <div
+                    style={{
+                      ...styles.dayGanCell,
+                      border: `2px solid ${elementColor(c.dayElement)}`,
+                      background: `${elementColor(c.dayElement)}14`,
+                    }}
+                  >
+                    <span style={styles.slotChar}>{c.dayMaster}</span>
+                    <span style={{ ...styles.slotEl, color: elementColor(c.dayElement) }}>
+                      일간
+                    </span>
+                  </div>
+                )}
+                {renderSlot(col.zhi)}
+              </div>
+            ))}
+          </div>
+          {selLetter !== null ? (
+            <p style={{ ...styles.mutedText, color: "#cc785c" }}>
+              {selLetter} 글자를 넣을 {selIsStem ? "천간" : "지지"} 자리를 탭하세요 — 칩을 다시
+              누르면 취소
+            </p>
+          ) : null}
+
+          <p style={{ ...styles.caption, margin: "12px 0 0" }}>글자 주머니</p>
+          {chipLetters.length > 0 ? (
+            <div style={styles.chipRow}>
+              {chipLetters.map((ch) => {
+                const el = letterEl(ch) ?? c.dayElement;
+                const on = selLetter === ch;
+                return (
+                  <button
+                    key={ch}
+                    type="button"
+                    className={on ? "rpg-chip-btn on" : "rpg-chip-btn"}
+                    style={{ border: `2px solid ${elementColor(el)}` }}
+                    onClick={() => setSelLetter(on ? null : ch)}
+                  >
+                    <span style={styles.chipChar}>{ch}</span>
+                    <span style={styles.chipCount}>×{counts.get(ch) ?? 0}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <p style={{ ...styles.mutedText, margin: "8px 0 0" }}>
+              아직 모은 글자가 없어요 — 던전에서 승리하면 글자를 얻어요
+            </p>
+          )}
+        </div>
+      ) : null}
 
       {/* 오늘의 기운 */}
       {fortune !== null ? (
@@ -616,9 +1025,9 @@ function HomeView({
       <button type="button" onClick={onReveal} className="rpg-btn secondary">
         정보 다시 보기
       </button>
-      {/* 생일을 잘못 넣었을 때의 유일한 복구 경로 — 같은 생일로 다시 저장하면 진행도는 유지된다 */}
+      {/* 모드 A: 생일 오입력 복구 경로(같은 생일 재저장 시 진행 유지) / 모드 B: 모드 선택으로 회귀(새 캐릭터) */}
       <button type="button" onClick={onRecreate} className="rpg-btn secondary">
-        생일 다시 입력 (다르게 넣으면 캐릭터 재생성)
+        {save.mode === "B" ? "처음부터 다시 (모드 선택)" : "생일 다시 입력 (다르게 넣으면 캐릭터 재생성)"}
       </button>
 
       <p style={styles.disclaimer}>게임적 재미를 위한 것으로 실제 운세·점술이 아닙니다</p>
@@ -831,6 +1240,28 @@ function ResultView({
             LEVEL UP! Lv.{r.levelAfter} (+{r.levelsGained})
           </span>
         ) : null}
+        {/* 모드 B 승리 보상 — 획득한 글자 칩 (한자 + 오행 한글) */}
+        {r.letters.length > 0 ? (
+          <>
+            <p style={styles.caption}>획득한 글자</p>
+            <div style={styles.dropRow}>
+              {r.letters.map((ch, i) => {
+                const el = letterEl(ch) ?? c.dayElement;
+                return (
+                  <span
+                    key={`${ch}-${i}`}
+                    style={{ ...styles.dropChip, border: `2px solid ${elementColor(el)}` }}
+                  >
+                    <span style={styles.dropChipChar}>{ch}</span>
+                    <span style={{ ...styles.dropChipEl, color: elementColor(el) }}>
+                      {elementKo(el)}
+                    </span>
+                  </span>
+                );
+              })}
+            </div>
+          </>
+        ) : null}
         {hint !== "" ? <p style={styles.hintText}>{hint}</p> : null}
         {hasNext ? (
           <button type="button" onClick={onNextStage} className="rpg-btn">
@@ -902,6 +1333,32 @@ const designCss = `
   .rpg-stage-btn:active { background: #f5f0e8; }
   .rpg-stage-btn:disabled { cursor: default; opacity: 0.55; }
   .rpg-hp-fill { transition: width 0.4s ease; }
+  .rpg-mode-btn {
+    display: flex; flex-direction: column; align-items: center; gap: 4px; width: 100%;
+    padding: 14px 10px; text-align: center; cursor: pointer;
+    background: #ffffff; border: 1px solid #e6dfd8; border-radius: 12px; font-family: ${SANS};
+  }
+  .rpg-mode-btn:active { background: #f5f0e8; }
+  .rpg-mode-btn.on { border-color: #cc785c; box-shadow: 0 0 0 3px rgba(204,120,92,0.15); }
+  .rpg-stem-btn {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 10px 0 6px; cursor: pointer;
+    background: #faf9f5; border: 2px solid #e6dfd8; border-radius: 8px; font-family: ${SANS};
+  }
+  .rpg-stem-btn:active { background: #f5f0e8; }
+  .rpg-slot-btn {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    width: 100%; min-height: 62px; padding: 8px 0 6px; cursor: default;
+    background: #faf9f5; border: 2px dashed #e6dfd8; border-radius: 8px; font-family: ${SANS};
+  }
+  .rpg-slot-btn.target { cursor: pointer; box-shadow: 0 0 0 3px rgba(204,120,92,0.22); }
+  .rpg-slot-btn.target:active { background: #f5f0e8; }
+  .rpg-chip-btn {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; cursor: pointer;
+    background: #faf9f5; border: 2px solid #e6dfd8; border-radius: 9999px; font-family: ${SANS};
+  }
+  .rpg-chip-btn:active { background: #f5f0e8; }
+  .rpg-chip-btn.on { box-shadow: 0 0 0 3px rgba(204,120,92,0.25); }
 `;
 
 const styles = {
@@ -1311,6 +1768,129 @@ const styles = {
     textAlign: "center",
     margin: "8px 0 0",
   } as const,
+
+  // create — 모드 선택 2카드 + 일간 10택 그리드
+  modeGrid: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 8,
+    margin: "4px 0 8px",
+  } as const,
+  modeEmoji: { fontSize: 26, lineHeight: 1.2 } as const,
+  modeName: {
+    fontFamily: SANS,
+    fontSize: 14,
+    fontWeight: 500,
+    color: "#141413",
+  } as const,
+  modeDesc: {
+    fontFamily: SANS,
+    fontSize: 11,
+    lineHeight: 1.4,
+    color: "#8e8b82",
+  } as const,
+  stemGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(5, 1fr)",
+    gap: 8,
+    margin: "8px 0 4px",
+  } as const,
+  stemChar: {
+    fontFamily: SERIF,
+    fontSize: 30,
+    lineHeight: 1.1,
+    color: "#141413",
+  } as const,
+  stemKo: { fontFamily: SANS, fontSize: 11, fontWeight: 500 } as const,
+
+  // home — 사주판·글자 주머니 (모드 B)
+  boardHead: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  } as const,
+  completeBadge: {
+    display: "inline-block",
+    fontFamily: SANS,
+    fontSize: 12,
+    fontWeight: 500,
+    letterSpacing: "0.5px",
+    color: "#ffffff",
+    background: "#141413", // 먹빛 — 완성의 무게감
+    borderRadius: 9999,
+    padding: "3px 12px",
+  } as const,
+  slotChar: {
+    fontFamily: SERIF,
+    fontSize: 26,
+    lineHeight: 1.1,
+    color: "#141413",
+  } as const,
+  slotEmptyChar: {
+    fontFamily: SERIF,
+    fontSize: 22,
+    lineHeight: 1.1,
+    color: "#c9c4bb",
+  } as const,
+  slotEl: { fontFamily: SANS, fontSize: 10, fontWeight: 500 } as const,
+  slotHint: {
+    fontFamily: SANS,
+    fontSize: 10,
+    fontWeight: 500,
+    color: "#cc785c", // 코랄 — 장착 가능 표시
+  } as const,
+  dayGanCell: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+    minHeight: 62,
+    padding: "8px 0 6px",
+    borderRadius: 8,
+  } as const,
+  chipRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+    margin: "8px 0 4px",
+  } as const,
+  chipChar: {
+    fontFamily: SERIF,
+    fontSize: 18,
+    lineHeight: 1.1,
+    color: "#141413",
+  } as const,
+  chipCount: {
+    fontFamily: SANS,
+    fontSize: 12,
+    fontWeight: 500,
+    color: "#6c6a64",
+  } as const,
+
+  // result — 획득 글자 칩 (모드 B)
+  dropRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+    margin: "4px 0 12px",
+  } as const,
+  dropChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "6px 12px",
+    background: "#faf9f5",
+    borderRadius: 9999,
+  } as const,
+  dropChipChar: {
+    fontFamily: SERIF,
+    fontSize: 18,
+    lineHeight: 1.1,
+    color: "#141413",
+  } as const,
+  dropChipEl: { fontFamily: SANS, fontSize: 12, fontWeight: 500 } as const,
 
   // result
   levelUpBadge: {

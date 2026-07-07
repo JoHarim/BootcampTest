@@ -19,16 +19,29 @@ export interface Stats {
 }
 
 // ── 사주 ──────────────────────────────────────────────
-export interface Pillar {
-  gan: string; // 천간 한자 1글자 (예: 甲)
-  zhi: string; // 지지 한자 1글자 (예: 子)
+// v2: 모드 B(수집)에서 글자가 비어 있을 수 있어 슬롯 단위 nullable.
+// 모드 A는 년·월·일 전부 채움(시각 미입력이면 time 이 {null,null}). day.gan 은 두 모드 모두 항상 존재.
+export interface PillarSlot {
+  gan: string | null; // 천간 한자 1글자 (예: 甲) | 빈 슬롯
+  zhi: string | null; // 지지 한자 1글자 (예: 子) | 빈 슬롯
 }
 
 export interface FourPillars {
-  year: Pillar;
-  month: Pillar;
-  day: Pillar;
-  time: Pillar | null; // 태어난 시각 모르면 null (시주 제외 계산)
+  year: PillarSlot;
+  month: PillarSlot;
+  day: PillarSlot;
+  time: PillarSlot;
+}
+
+// 모드 B 장착 슬롯 7개 (일간은 캐릭터 정체성이라 SaveData.dayGan 에 고정, 여기 없음)
+export interface LetterSlots {
+  yearGan: string | null;
+  yearZhi: string | null;
+  monthGan: string | null;
+  monthZhi: string | null;
+  dayZhi: string | null;
+  timeGan: string | null;
+  timeZhi: string | null;
 }
 
 export type TenGodKey =
@@ -47,7 +60,7 @@ export interface SkillDef {
 
 export interface JobClass {
   id: string; // 영문 슬러그 (예: "guardian")
-  tenGod: TenGodKey; // 격국 판정 키 (월지 본기 vs 일간의 십성)
+  tenGod: TenGodKey | null; // 격국 판정 키 (월지 본기 vs 일간의 십성). null = 무격(모드 B 월지 공백)
   name: string; // 예: "수호기사"
   emoji: string;
   passiveDesc: string; // 패시브 한 줄 (수치 포함)
@@ -135,29 +148,41 @@ export interface BattleState {
 }
 
 // ── 저장 ──────────────────────────────────────────────
-// localStorage 키: "sajuweb:rpg"
+// localStorage 키: "sajuweb:rpg" — v2. 구버전(mode 필드 없음)은 mode "A" 로 마이그레이션해 읽는다.
 export interface SaveData {
-  birthDate: string;
-  birthTime: string;
+  mode: "A" | "B"; // A = 내 사주 / B = 사주 수집
+  birthDate: string; // 모드 A 전용 (B 는 "")
+  birthTime: string; // 모드 A 전용 (B 는 "")
+  dayGan: string; // 모드 B 전용 — 선택한 일간 한자 (A 는 "")
+  slots: LetterSlots | null; // 모드 B 전용 장착 상태 (A 는 null)
+  inventory: string[]; // 모드 B 전용 — 획득 글자(한자 1글자씩, 중복 허용) (A 는 [])
   level: number;
   exp: number;
   clearedStages: Record<string, number>; // 던전 id → 클리어한 최고 스테이지 (1~5)
 }
 
-// ── 모듈별 필수 export 계약 ───────────────────────────
+// ── 모듈별 필수 export 계약 (v2 — 모드 B 추가분 포함) ──
 // content.ts:
 //   export const JOBS: Record<TenGodKey, JobClass>
-//   export const DUNGEONS: Dungeon[]            // 오행별 5개
+//   export const UNFORMED_JOB: JobClass          // 모드 B 월지 공백 폴백 — 무명객(無格)
+//   export const DUNGEONS: Dungeon[]             // 오행별 5개
+//   export const STEM_POOL: Record<Element, string[]>    // 오행 → 천간 글자 풀
+//   export const BRANCH_POOL: Record<Element, string[]>  // 오행 → 지지 글자 풀
 //   export function expForLevel(level: number): number   // 다음 레벨까지 필요 경험치
 //   export const MAX_LEVEL: number
 // saju-engine.ts:
-//   export function createCharacter(birthDate: string, birthTime: string): Character  // 실패 시 throw
+//   export function createCharacter(birthDate: string, birthTime: string): Character  // 모드 A. 실패 시 throw
+//   export function createCharacterFromSlots(dayGan: string, slots: LetterSlots): Character  // 모드 B. 빈 슬롯 0 기여, 스케일 ×6 고정, 월지 없으면 UNFORMED_JOB
+//   export function isStem(letter: string): boolean   // 천간이면 true, 지지면 false (미인식은 throw)
 //   export function getDailyFortune(c: Character, today: Date): DailyFortune
 //   export function statsAtLevel(base: Stats, level: number): Stats  // 레벨 성장 반영 (패시브 포함 전)
 //   export function elementMultiplier(attacker: Element, defender: Element): number  // 극함 1.5 / 극당함 0.7 / 그 외 1.0
 //   export function elementColor(e: Element): string  // 오행 → 표시 색 (DESIGN.md 팔레트)
 //   export function elementKo(e: Element): string     // 木→목 …
+//   export function letterElement(letter: string): Element  // 천간/지지 글자 → 오행 (미인식은 throw)
 // battle.ts:
 //   export function initBattle(c: Character, level: number, m: Monster, f: DailyFortune | null, seed: number): BattleState
 //   export function stepBattle(s: BattleState, cmd: BattleCommand): { state: BattleState; events: BattleEvent[] }
 //     — 순수 함수(인자 불변), 플레이어 행동 → 생존 시 몬스터 반격 1회까지가 한 스텝
+//   export function rollLetterDrop(dungeonElement: Element, isBoss: boolean, seed: number): { letters: string[]; seed: number }
+//     — 승리 보상: 일반 1글자·보스 2글자, 70% 던전 오행 풀 / 30% 전체 랜덤 (시드 LCG)

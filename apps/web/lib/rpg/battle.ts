@@ -7,11 +7,13 @@ import type {
   Character,
   Combatant,
   DailyFortune,
+  Element,
   Monster,
   StatKey,
   Stats,
 } from "./types";
 import { elementMultiplier, statsAtLevel } from "./saju-engine";
+import { BRANCH_POOL, STEM_POOL } from "./content";
 
 // ── 밸런스 상수 (설계서 4장) ──────────────────────────
 const BASE_MAX_HP = 40; // maxHp = 40 + hp×3 (시뮬 튜닝 2026-07-07: 60+×4는 무패 게임이라 하향)
@@ -27,6 +29,9 @@ const CRIT_MULT = 1.6; // 치명타 배율
 const LCG_A = 1103515245; // seed = (seed×A + C) mod 2^31
 const LCG_C = 12345;
 const LCG_M = 2147483648; // 2^31
+const DROP_ELEMENT_BIAS = 0.7; // 드랍 70%는 던전 오행 글자 — "필요한 오행의 던전을 돌아라"
+const DROP_COUNT_NORMAL = 1; // 일반 승리 드랍 수
+const DROP_COUNT_BOSS = 2; // 보스 승리 드랍 수
 
 // ── 결정적 난수 (LCG) ─────────────────────────────────
 // seed×A 는 2^53 을 넘어 배정밀도 곱으로는 정확한 mod 가 안 나온다.
@@ -235,4 +240,32 @@ export function stepBattle(
     won,
   };
   return { state, events };
+}
+
+// 모드 B 승리 보상 — 일반 1글자·보스 2글자. 70%는 던전 오행 풀(천간+지지), 30%는 전체 랜덤.
+// 전투 종료 시점의 seed 를 이어받아 굴리고, 소비한 seed 를 돌려준다 (재현 가능).
+export function rollLetterDrop(
+  dungeonElement: Element,
+  isBoss: boolean,
+  seed: number,
+): { letters: string[]; seed: number } {
+  const elementPool = [...STEM_POOL[dungeonElement], ...BRANCH_POOL[dungeonElement]];
+  const allPool = (Object.keys(STEM_POOL) as Element[]).flatMap((e) => [
+    ...STEM_POOL[e],
+    ...BRANCH_POOL[e],
+  ]);
+
+  const letters: string[] = [];
+  let s = seed;
+  const count = isBoss ? DROP_COUNT_BOSS : DROP_COUNT_NORMAL;
+  for (let i = 0; i < count; i += 1) {
+    const biasRoll = roll(s);
+    s = biasRoll.seed;
+    const pool = biasRoll.value < DROP_ELEMENT_BIAS ? elementPool : allPool;
+    const pickRoll = roll(s);
+    s = pickRoll.seed;
+    const idx = Math.min(Math.floor(pickRoll.value * pool.length), pool.length - 1);
+    letters.push(pool[idx]);
+  }
+  return { letters, seed: s };
 }

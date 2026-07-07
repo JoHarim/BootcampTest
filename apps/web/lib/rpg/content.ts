@@ -1,4 +1,4 @@
-// 사주 RPG — 콘텐츠 데이터 (직업 10종 · 던전 5종 · 성장 곡선). 값은 전부 결정적.
+// 사주 RPG — 콘텐츠 데이터 (직업 10종+무격 폴백 · 던전 5종 · 글자 풀 · 성장 곡선). 값은 전부 결정적.
 // 의존: ./types 만. 로직은 데이터 생성 헬퍼(순수 함수)까지만 담는다.
 import type {
   Dungeon,
@@ -215,6 +215,45 @@ export const JOBS: Record<TenGodKey, JobClass> = {
       kind: "heal",
     },
   },
+};
+
+// ── 무격(無格) 폴백 직업 (설계서 8장 — 모드 B 월지 공백) ──
+// 아직 격이 서지 않은 떠돌이. 월지를 채우는 순간 본기 십성 직업으로 각성한다.
+export const UNFORMED_JOB: JobClass = {
+  id: "unformed",
+  tenGod: null,
+  name: "무명객",
+  emoji: "🌫️",
+  passiveDesc: "정처 없는 발걸음이 몸을 단련한다 — 체력 +10%",
+  passiveStat: "hp",
+  passivePct: 10,
+  skill: {
+    name: "무명일섬",
+    emoji: "👊",
+    desc: "이름 없는 맨손 일격을 내질러 지능의 160% 피해",
+    cooldown: SKILL_COOLDOWN,
+    power: 1.6,
+    kind: "damage",
+  },
+};
+
+// ── 글자 풀 (설계서 8장 — 모드 B 드랍·장착, 오행 → 간지) ──
+// 천간: 오행별 양간·음간 순
+export const STEM_POOL: Record<Element, string[]> = {
+  木: ["甲", "乙"],
+  火: ["丙", "丁"],
+  土: ["戊", "己"],
+  金: ["庚", "辛"],
+  水: ["壬", "癸"],
+};
+
+// 지지: 土는 사고(四庫)라 네 글자 — 드랍에서 土가 자연히 흔해진다
+export const BRANCH_POOL: Record<Element, string[]> = {
+  木: ["寅", "卯"],
+  火: ["巳", "午"],
+  土: ["丑", "辰", "未", "戌"],
+  金: ["申", "酉"],
+  水: ["子", "亥"],
 };
 
 // ── 던전 생성 헬퍼 (설계서 5장 공식 — 전부 결정적) ────────
