@@ -28,3 +28,6 @@ test-results/
 playwright-report/
 .claude/.harness-state.json
 *.tsbuildinfo
+
+# Netlify CLI 로컬 상태 (사이트 연결)
+.netlify/
