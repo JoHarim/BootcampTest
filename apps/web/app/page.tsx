@@ -588,14 +588,22 @@ export default function LuckyRun() {
 
 // 배경 앰비언스 — 떠다니는 코인 이모지 레이어(고정 좌표라 SSR 안전, Math.random 안 씀). 비네트는 CSS.
 const FLOAT_COINS = [
-  { icon: "🪙", left: "8%", size: 30, dur: 17, delay: 0 },
-  { icon: "🎰", left: "20%", size: 22, dur: 22, delay: 6 },
-  { icon: "💎", left: "34%", size: 20, dur: 19, delay: 11 },
-  { icon: "🪙", left: "48%", size: 34, dur: 25, delay: 3 },
-  { icon: "⭐", left: "62%", size: 22, dur: 15, delay: 9 },
-  { icon: "🪙", left: "74%", size: 26, dur: 21, delay: 14 },
-  { icon: "🍒", left: "86%", size: 24, dur: 18, delay: 5 },
-  { icon: "🪙", left: "93%", size: 30, dur: 23, delay: 12 },
+  { icon: "🪙", left: "5%", size: 30, dur: 10, delay: 0 },
+  { icon: "🎰", left: "13%", size: 22, dur: 13, delay: 4 },
+  { icon: "💎", left: "21%", size: 20, dur: 11, delay: 8 },
+  { icon: "🪙", left: "29%", size: 34, dur: 14, delay: 2 },
+  { icon: "⭐", left: "37%", size: 22, dur: 9, delay: 6 },
+  { icon: "🪙", left: "45%", size: 26, dur: 12, delay: 10 },
+  { icon: "🍒", left: "53%", size: 24, dur: 10, delay: 3 },
+  { icon: "🪙", left: "61%", size: 30, dur: 13, delay: 7 },
+  { icon: "💎", left: "69%", size: 18, dur: 11, delay: 1 },
+  { icon: "🪙", left: "77%", size: 32, dur: 14, delay: 9 },
+  { icon: "⭐", left: "85%", size: 20, dur: 9, delay: 5 },
+  { icon: "🪙", left: "92%", size: 28, dur: 12, delay: 11 },
+  { icon: "🍒", left: "97%", size: 22, dur: 10, delay: 2 },
+  { icon: "🪙", left: "17%", size: 24, dur: 8, delay: 13 },
+  { icon: "💎", left: "57%", size: 26, dur: 13, delay: 12 },
+  { icon: "🪙", left: "81%", size: 20, dur: 9, delay: 14 },
 ];
 
 function Ambience() {
@@ -716,10 +724,10 @@ const st: Record<string, React.CSSProperties> = {
     fontSize: 58,
     fontWeight: 400, // Bungee 는 단일 웨이트
     letterSpacing: 2,
-    color: GOLD,
-    // 네온 튜브: 골드 글로우 + 아래 전구 그림자 + 미세 홍조
+    color: "#fff4cf", // 네온 튜브 코어는 흰빛에 가깝게 (글로우가 색을 입힌다)
+    // 강한 네온 튜브: 다층 골드 글로우 + 오렌지 확산 + 아래 전구 그림자
     textShadow:
-      "0 0 8px rgba(245,197,66,0.9), 0 0 22px rgba(245,197,66,0.45), 0 0 40px rgba(214,110,60,0.5), 0 4px 0 #8a6400, 0 5px 2px rgba(0,0,0,0.4)",
+      "0 0 4px #fff4cf, 0 0 12px rgba(245,197,66,1), 0 0 26px rgba(245,197,66,0.85), 0 0 46px rgba(245,197,66,0.6), 0 0 70px rgba(214,110,60,0.7), 0 4px 0 #8a6400, 0 5px 3px rgba(0,0,0,0.45)",
     margin: "0 0 10px",
   },
   logoKo: { color: "#d9c9ae", fontSize: 16, margin: "0 0 28px" },
@@ -841,24 +849,24 @@ const gameCss = `
     background: radial-gradient(120% 80% at 50% 40%, transparent 55%, rgba(15,5,4,0.55) 100%);
   }
   .float-coin {
-    position: absolute; font-size: 26px; opacity: 0.16;
-    filter: drop-shadow(0 0 6px rgba(245,197,66,0.5));
+    position: absolute; font-size: 26px; opacity: 0.24;
+    filter: drop-shadow(0 0 6px rgba(245,197,66,0.55));
     animation: floatUp linear infinite;
     will-change: transform, opacity;
   }
   @keyframes floatUp {
     0%   { transform: translateY(20px) rotate(0deg) scale(0.8); opacity: 0; }
-    12%  { opacity: 0.18; }
-    88%  { opacity: 0.18; }
+    10%  { opacity: 0.26; }
+    88%  { opacity: 0.26; }
     100% { transform: translateY(-110vh) rotate(320deg) scale(1.1); opacity: 0; }
   }
   @media (prefers-reduced-motion: reduce) { .float-coin { animation: none; opacity: 0.1; } }
 
   /* 로고 전구 아치 은은한 점멸 (타이틀) */
-  .logo-glow { animation: logoPulse 3.4s ease-in-out infinite; }
+  .logo-glow { animation: logoPulse 2.6s ease-in-out infinite; }
   @keyframes logoPulse {
     0%, 100% { filter: brightness(1); }
-    50% { filter: brightness(1.12); }
+    50% { filter: brightness(1.28); }
   }
 
   .btn-gold {
