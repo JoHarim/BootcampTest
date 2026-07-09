@@ -34,6 +34,7 @@ interface ActiveTicket {
 export default function ScratchBooth({ coins, locked, onPlay, onWin, onDone }: Props) {
   const [ticket, setTicket] = useState<ActiveTicket | null>(null);
   const [revealed, setRevealed] = useState(false);
+  const [flashId, setFlashId] = useState(0); // 대박 골드 스크린 플래시 (key 재마운트)
 
   function buy(tier: TicketTier) {
     if (locked || ticket !== null) return;
@@ -50,6 +51,7 @@ export default function ScratchBooth({ coins, locked, onPlay, onWin, onDone }: P
     onWin(prize);
     if (prize > 0) {
       if (prize >= ticket.tier.cost * 10) {
+        setFlashId(Date.now()); // 골드 스크린 플래시
         sfx.jackpot();
         burstConfetti(150, 0.5, 0.4);
         setTimeout(() => burstConfetti(100, 0.3, 0.5), 300);
@@ -75,6 +77,7 @@ export default function ScratchBooth({ coins, locked, onPlay, onWin, onDone }: P
 
   return (
     <div>
+      {flashId !== 0 ? <div key={flashId} className="jackpot-flash" aria-hidden="true" /> : null}
       {ticket === null ? (
         <>
           <p style={st.hint}>티켓을 고르세요 — 같은 금액 3개면 당첨!</p>

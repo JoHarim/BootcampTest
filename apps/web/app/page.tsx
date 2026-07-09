@@ -4,6 +4,7 @@
 // 규칙·확률은 lib/game/rules.ts, 상태 전이는 lib/game/run.ts, 저장은 lib/game/save.ts(어댑터)만 사용.
 // SSR 안전: 저장소 읽기는 마운트 후. 마운트 확정 전에는 중립 로딩 뷰.
 import { useEffect, useRef, useState } from "react";
+import { MrFin } from "../components/game/MrFin";
 import ScratchBooth from "../components/game/ScratchBooth";
 import SlotMachine from "../components/game/SlotMachine";
 import { burstConfetti, ensureAudio, setMuted, sfx } from "../components/game/juice";
@@ -333,7 +334,7 @@ export default function LuckyRun() {
             <div style={st.hudCoins}>
               🪙 <CoinCounter value={run.coins} />
               {run.loan !== null ? (
-                <div style={st.debtLine} data-testid="debt-line">
+                <div key={debtTotal(run)} className="debt-tick" style={st.debtLine} data-testid="debt-line">
                   🦈 빚 {debtTotal(run).toLocaleString()} (+{run.loan.perPlay}/기회) → 순자산{" "}
                   {netWorth(run).toLocaleString()}
                 </div>
@@ -420,11 +421,14 @@ export default function LuckyRun() {
           </div>
 
           <div style={st.boothArea}>
-            {run.booth === "scratch" ? (
-              <ScratchBooth coins={run.coins} locked={locked || clearInfo !== null || rescue || loanModal} onPlay={handlePlay} onWin={handleWin} onDone={handleDone} />
-            ) : (
-              <SlotMachine coins={run.coins} locked={locked || clearInfo !== null || rescue || loanModal} onPlay={handlePlay} onWin={handleWin} onDone={handleDone} />
-            )}
+            {/* 부스 전환 시 재마운트 → CSS 슬라이드 인 */}
+            <div key={run.booth} className="booth-slide">
+              {run.booth === "scratch" ? (
+                <ScratchBooth coins={run.coins} locked={locked || clearInfo !== null || rescue || loanModal} onPlay={handlePlay} onWin={handleWin} onDone={handleDone} />
+              ) : (
+                <SlotMachine coins={run.coins} locked={locked || clearInfo !== null || rescue || loanModal} onPlay={handlePlay} onWin={handleWin} onDone={handleDone} />
+              )}
+            </div>
           </div>
 
           {/* 라운드 클리어 팝업 */}
@@ -442,7 +446,8 @@ export default function LuckyRun() {
                 )}
                 {clearInfo.debtPaid > 0 ? (
                   <p style={st.popupLine} data-testid="clear-debt-line">
-                    🦈 미스터 핀 몫 회수 <strong style={{ color: "#e07a6a" }}>−{clearInfo.debtPaid.toLocaleString()}</strong>
+                    <MrFin mood="happy" size={42} /> 미스터 핀 몫 회수{" "}
+                    <strong style={{ color: "#e07a6a" }}>−{clearInfo.debtPaid.toLocaleString()}</strong>
                     <br />
                     <span style={{ fontSize: 13, color: "#b8a58f" }}>&ldquo;…거래 즐거웠어. 또 와~&rdquo;</span>
                   </p>
@@ -461,7 +466,7 @@ export default function LuckyRun() {
           {loanModal ? (
             <div style={st.overlay}>
               <div style={{ ...st.popup, borderColor: "#5db8a6" }} className="pop-in" data-testid="loan-modal">
-                <div style={{ fontSize: 42 }}>🦈</div>
+                <MrFin mood="deal" size={84} />
                 <h2 style={{ ...st.popupTitle, color: "#5db8a6", fontSize: 24 }}>상어금융 — 미스터 핀</h2>
                 <p style={st.popupLine}>
                   &ldquo;어서 와~ 정직한(?) 상어금융이야.{" "}
@@ -497,7 +502,7 @@ export default function LuckyRun() {
           {rescue ? (
             <div style={st.overlay}>
               <div style={{ ...st.popup, borderColor: "#c64545" }} className="pop-in" data-testid="rescue-modal">
-                <div style={{ fontSize: 42 }}>🦈</div>
+                <MrFin mood="menace" size={84} />
                 <h2 style={{ ...st.popupTitle, color: "#e07a6a", fontSize: 24 }}>미스터 핀의 마지막 제안</h2>
                 <p style={st.popupLine}>
                   &ldquo;어이, 주머니가 텅텅이네? 마지막 제안이야.{" "}
@@ -609,11 +614,20 @@ function Ambience() {
   );
 }
 
-// 숫자가 촤르륵 올라가는 코인 카운터
+// 숫자가 촤르륵 올라가는 코인 카운터 + 증가분 "+N" 플로팅 팝
 function CoinCounter({ value }: { value: number }) {
   const [shown, setShown] = useState(value);
   const shownRef = useRef(value);
   const rafRef = useRef<number | null>(null);
+  const [pop, setPop] = useState<{ id: number; amount: number } | null>(null); // 증가 이벤트
+  const prevRef = useRef(value);
+
+  // 증가분 감지 — 지불(감소)은 무시, 당첨·입금(증가)만 팝
+  useEffect(() => {
+    const diff = value - prevRef.current;
+    prevRef.current = value;
+    if (diff > 0) setPop({ id: Date.now(), amount: diff });
+  }, [value]);
 
   useEffect(() => {
     const from = shownRef.current;
@@ -640,7 +654,22 @@ function CoinCounter({ value }: { value: number }) {
     };
   }, [value]);
 
-  return <strong data-testid="coin-count">{shown.toLocaleString()}</strong>;
+  return (
+    <span style={{ position: "relative", display: "inline-block" }}>
+      <strong
+        data-testid="coin-count"
+        key={pop === null ? "n" : pop.id}
+        className={pop === null ? undefined : "coin-bump"}
+      >
+        {shown.toLocaleString()}
+      </strong>
+      {pop !== null ? (
+        <span key={`f${pop.id}`} className="win-float" aria-hidden="true">
+          +{pop.amount.toLocaleString()}
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 // ── 스타일 (웜 카지노 카툰: 다크레드 배경 + 골드) ─────────────
@@ -942,4 +971,83 @@ const gameCss = `
   }
 
   .reel-glow { box-shadow: 0 0 18px rgba(245,197,66,0.7), inset 0 0 12px rgba(245,197,66,0.3); }
+
+  /* ── 손맛(juice) 마이크로 인터랙션 ─────────────────── */
+
+  /* 당첨 "+N" 골드 플로팅 — 코인 카운터 위로 떠올라 사라진다 */
+  .win-float {
+    position: absolute; left: 50%; top: -4px;
+    transform: translateX(-50%);
+    font-size: 15px; font-weight: 800; color: #ffdd87;
+    text-shadow: 0 0 8px rgba(245,197,66,0.85), 0 1px 0 rgba(0,0,0,0.5);
+    pointer-events: none; white-space: nowrap;
+    animation: winFloat 0.9s ease-out both;
+  }
+  @keyframes winFloat {
+    0%   { opacity: 0; transform: translate(-50%, 4px) scale(0.7); }
+    15%  { opacity: 1; transform: translate(-50%, -6px) scale(1.15); }
+    100% { opacity: 0; transform: translate(-50%, -30px) scale(1); }
+  }
+
+  /* 코인 카운터 증가 펄스 — 오버슈트 이징으로 통통하게 */
+  .coin-bump { display: inline-block; animation: coinBump 0.35s cubic-bezier(0.34, 1.56, 0.64, 1); }
+  @keyframes coinBump {
+    0%   { transform: scale(1); }
+    35%  { transform: scale(1.22); filter: brightness(1.3); }
+    100% { transform: scale(1); filter: brightness(1); }
+  }
+
+  /* 베팅 칩 선택 팝 — chip-on 이 새 칩에 붙는 순간 자동 재생 */
+  .chip.chip-on { animation: chipPop 0.28s cubic-bezier(0.34, 1.56, 0.64, 1); }
+  @keyframes chipPop {
+    0%   { transform: scale(0.85); }
+    55%  { transform: scale(1.12); }
+    100% { transform: scale(1); }
+  }
+
+  /* 티켓 카드 호버 기울임 — 기존 규칙을 뒤에서 덮어쓴다 */
+  .tier-card:hover:not(:disabled) {
+    transform: translateY(-4px) rotate(-1.4deg) scale(1.02);
+    border-color: #f5c542;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.4);
+  }
+
+  /* 부스 탭 전환 슬라이드 인 */
+  .booth-slide { animation: boothSlide 0.28s ease-out both; }
+  @keyframes boothSlide {
+    from { opacity: 0; transform: translateX(26px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  /* 빚 배지 이자 틱 — 미스터 핀 몫이 자랄 때마다 붉게 꿈틀 */
+  .debt-tick { animation: debtTick 0.45s ease-out; }
+  @keyframes debtTick {
+    0%   { transform: scale(1); }
+    30%  { transform: scale(1.12); color: #ff8a7a; text-shadow: 0 0 8px rgba(214,69,65,0.7); }
+    100% { transform: scale(1); }
+  }
+
+  /* 잭팟 골드 스크린 플래시 — 컨페티 캔버스(9999) 바로 아래 */
+  .jackpot-flash {
+    position: fixed; inset: 0; pointer-events: none; z-index: 9998;
+    background: radial-gradient(circle at 50% 40%, rgba(255,221,135,0.75), rgba(245,197,66,0.35) 45%, transparent 75%);
+    animation: jackpotFlash 0.9s ease-out both;
+  }
+  @keyframes jackpotFlash {
+    0%   { opacity: 0; }
+    12%  { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
+  /* 접근성 — 모션 최소화: 팝·슬라이드·플래시 정적 처리 ("+N"은 제자리 페이드로 정보 유지) */
+  @media (prefers-reduced-motion: reduce) {
+    .win-float { animation: winFloatStill 0.9s ease-out both; }
+    .coin-bump, .chip.chip-on, .booth-slide, .debt-tick { animation: none; }
+    .tier-card:hover:not(:disabled) { transform: none; }
+    .jackpot-flash { animation: none; opacity: 0; }
+  }
+  @keyframes winFloatStill {
+    0%   { opacity: 1; transform: translate(-50%, -6px); }
+    100% { opacity: 0; transform: translate(-50%, -6px); }
+  }
 `;

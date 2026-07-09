@@ -7,13 +7,13 @@ import {
   PAIR_MULT,
   REEL_STRIP,
   SLOT_BETS,
-  SYMBOL_ICON,
   TRIPLE_MULT,
   drawSpin,
   type SlotSymbol,
   type SpinOutcome,
 } from "../../lib/game/rules";
 import { burstConfetti, sfx } from "./juice";
+import { SymbolIcon } from "./symbols";
 
 interface Props {
   coins: number;
@@ -28,6 +28,8 @@ const WINDOW_H = CELL * 3; // 릴 창에 심볼 3개가 보인다 (가운데가 
 const STRIP_LEN = REEL_STRIP.length;
 const DURATIONS = [1300, 2100, 3100];
 const EXTRA_TURNS = [3, 4, 5];
+const BOUNCE_MS = 170; // 정지 직후 바운스 시간
+const BOUNCE_CELLS = 0.32; // 오버슈트 폭 (칸 단위 — 지나쳤다 덜컹 내려앉는다)
 
 export default function SlotMachine({ coins, locked, onPlay, onWin, onDone }: Props) {
   const [bet, setBet] = useState(SLOT_BETS[0]);
@@ -35,6 +37,7 @@ export default function SlotMachine({ coins, locked, onPlay, onWin, onDone }: Pr
   const [spinning, setSpinning] = useState(false);
   const [lastOutcome, setLastOutcome] = useState<{ outcome: SpinOutcome; win: number } | null>(null);
   const [leverPulled, setLeverPulled] = useState(false);
+  const [flashId, setFlashId] = useState(0); // 잭팟 스크린 플래시 트리거 (key 재마운트)
   const rafRef = useRef<number | null>(null);
   const failsafeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTickRef = useRef(0);
@@ -79,20 +82,31 @@ export default function SlotMachine({ coins, locked, onPlay, onWin, onDone }: Pr
 
     const t0 = performance.now();
     const stopped = [false, false, false];
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     function frame(now: number) {
       const next: [number, number, number] = [...starts] as [number, number, number];
       let allDone = true;
       for (let i = 0; i < 3; i++) {
-        const t = Math.min(1, (now - t0) / DURATIONS[i]);
-        const eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
-        next[i] = starts[i] + (targets[i] - starts[i]) * eased;
+        const elapsed = now - t0;
+        const t = Math.min(1, elapsed / DURATIONS[i]);
         if (t < 1) {
+          const eased = 1 - Math.pow(1 - t, 3); // easeOutCubic (주행 구간)
+          next[i] = starts[i] + (targets[i] - starts[i]) * eased;
           allDone = false;
-        } else if (!stopped[i]) {
-          stopped[i] = true;
-          next[i] = targets[i];
-          sfx.reelStop();
+        } else {
+          if (!stopped[i]) {
+            stopped[i] = true;
+            sfx.reelStop();
+          }
+          // 정지 직후 단발 바운스 — 목표를 0.32칸 지나쳤다가 철컥 내려앉는다
+          const bt = (elapsed - DURATIONS[i]) / BOUNCE_MS;
+          if (!reduceMotion && bt < 1) {
+            next[i] = targets[i] + BOUNCE_CELLS * Math.sin(bt * Math.PI);
+            allDone = false;
+          } else {
+            next[i] = targets[i];
+          }
         }
       }
       if (!allDone && now - lastTickRef.current > 90) {
@@ -121,7 +135,7 @@ export default function SlotMachine({ coins, locked, onPlay, onWin, onDone }: Pr
         setPositions(targets);
         settle(outcome, win);
       }
-    }, DURATIONS[2] + 500);
+    }, DURATIONS[2] + BOUNCE_MS + 500);
   }
 
   function settle(outcome: SpinOutcome, win: number) {
@@ -131,6 +145,7 @@ export default function SlotMachine({ coins, locked, onPlay, onWin, onDone }: Pr
     const isJackpot = outcome.kind === "triple" && outcome.symbols[0] === "seven";
     if (win > 0) {
       if (isJackpot) {
+        setFlashId(Date.now()); // 골드 스크린 플래시
         sfx.jackpot();
         burstConfetti(170, 0.5, 0.35);
         setTimeout(() => burstConfetti(120, 0.25, 0.45), 350);
@@ -168,7 +183,7 @@ export default function SlotMachine({ coins, locked, onPlay, onWin, onDone }: Pr
         >
           {strip.map((s, i) => (
             <div key={i} style={st.reelCell}>
-              {SYMBOL_ICON[s]}
+              <SymbolIcon id={s} size={44} />
             </div>
           ))}
         </div>
@@ -182,6 +197,8 @@ export default function SlotMachine({ coins, locked, onPlay, onWin, onDone }: Pr
   return (
     <div style={{ display: "flex", justifyContent: "center" }}>
       <div style={st.cabinetWrap} className={isJackpot ? "shake" : undefined}>
+        {/* 잭팟 골드 스크린 플래시 — key 재마운트로 재생 */}
+        {flashId !== 0 ? <div key={flashId} className="jackpot-flash" aria-hidden="true" /> : null}
         {/* 마퀴 (전구 아치) */}
         <div style={st.marquee}>
           <div style={st.bulbRow}>
@@ -256,7 +273,10 @@ export default function SlotMachine({ coins, locked, onPlay, onWin, onDone }: Pr
             </button>
           </div>
           <div style={st.payTable}>
-            페어 x{PAIR_MULT} · 🍒x{TRIPLE_MULT.cherry} · 🍋x{TRIPLE_MULT.lemon} · ⭐x{TRIPLE_MULT.star} · 💎x{TRIPLE_MULT.gem} · 7️⃣x{TRIPLE_MULT.seven}
+            페어 x{PAIR_MULT} · <SymbolIcon id="cherry" size={14} />x{TRIPLE_MULT.cherry} ·{" "}
+            <SymbolIcon id="lemon" size={14} />x{TRIPLE_MULT.lemon} · <SymbolIcon id="star" size={14} />x
+            {TRIPLE_MULT.star} · <SymbolIcon id="gem" size={14} />x{TRIPLE_MULT.gem} ·{" "}
+            <SymbolIcon id="seven" size={14} />x{TRIPLE_MULT.seven}
           </div>
         </div>
 
