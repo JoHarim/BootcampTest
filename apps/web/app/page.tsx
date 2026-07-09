@@ -259,6 +259,7 @@ export default function LuckyRun() {
   return (
     <main style={st.main}>
       <style>{gameCss}</style>
+      <Ambience />
 
       {/* 우상단 소리 토글 (전 화면 공통) */}
       <button type="button" onClick={toggleSound} style={st.muteBtn} aria-label="소리 켜기/끄기">
@@ -270,7 +271,7 @@ export default function LuckyRun() {
       {phase === "title" ? (
         <section style={st.titleWrap} data-testid="title-view">
           <div style={st.logoDeco}>🎰</div>
-          <h1 style={st.logo}>LUCKY RUN</h1>
+          <h1 style={st.logo} className="logo-glow">LUCKY RUN</h1>
           <p style={st.logoKo}>럭키런 — 긁고, 돌리고, 살아남아라</p>
 
           <div style={st.titleBtns}>
@@ -580,6 +581,34 @@ export default function LuckyRun() {
   );
 }
 
+// 배경 앰비언스 — 떠다니는 코인 이모지 레이어(고정 좌표라 SSR 안전, Math.random 안 씀). 비네트는 CSS.
+const FLOAT_COINS = [
+  { icon: "🪙", left: "8%", size: 30, dur: 17, delay: 0 },
+  { icon: "🎰", left: "20%", size: 22, dur: 22, delay: 6 },
+  { icon: "💎", left: "34%", size: 20, dur: 19, delay: 11 },
+  { icon: "🪙", left: "48%", size: 34, dur: 25, delay: 3 },
+  { icon: "⭐", left: "62%", size: 22, dur: 15, delay: 9 },
+  { icon: "🪙", left: "74%", size: 26, dur: 21, delay: 14 },
+  { icon: "🍒", left: "86%", size: 24, dur: 18, delay: 5 },
+  { icon: "🪙", left: "93%", size: 30, dur: 23, delay: 12 },
+];
+
+function Ambience() {
+  return (
+    <div className="ambience" aria-hidden="true">
+      {FLOAT_COINS.map((c, i) => (
+        <span
+          key={i}
+          className="float-coin"
+          style={{ left: c.left, bottom: "-40px", fontSize: c.size, animationDuration: `${c.dur}s`, animationDelay: `${c.delay}s` }}
+        >
+          {c.icon}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // 숫자가 촤르륵 올라가는 코인 카운터
 function CoinCounter({ value }: { value: number }) {
   const [shown, setShown] = useState(value);
@@ -616,7 +645,8 @@ function CoinCounter({ value }: { value: number }) {
 
 // ── 스타일 (웜 카지노 카툰: 다크레드 배경 + 골드) ─────────────
 const SANS = 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-const SERIF = 'Georgia, "Times New Roman", serif';
+// 로고·팝업 제목용 디스플레이 폰트 (self-host Bungee, 외부 요청 0). 미로드 시 세리프 폴백.
+const DISPLAY = '"Bungee", Georgia, serif';
 const GOLD = "#f5c542";
 
 const st: Record<string, React.CSSProperties> = {
@@ -650,16 +680,18 @@ const st: Record<string, React.CSSProperties> = {
     zIndex: 20,
   },
   // S1 / S3
-  titleWrap: { textAlign: "center", maxWidth: 560, width: "100%", paddingTop: 40 },
+  titleWrap: { textAlign: "center", maxWidth: 560, width: "100%", paddingTop: 40, position: "relative", zIndex: 1 },
   logoDeco: { fontSize: 54, marginBottom: 6 },
   logo: {
-    fontFamily: SERIF,
-    fontSize: 56,
-    fontWeight: 700,
-    letterSpacing: 6,
+    fontFamily: DISPLAY,
+    fontSize: 58,
+    fontWeight: 400, // Bungee 는 단일 웨이트
+    letterSpacing: 2,
     color: GOLD,
-    textShadow: "0 0 24px rgba(245,197,66,0.35), 0 3px 0 #8a6400",
-    margin: "0 0 8px",
+    // 네온 튜브: 골드 글로우 + 아래 전구 그림자 + 미세 홍조
+    textShadow:
+      "0 0 8px rgba(245,197,66,0.9), 0 0 22px rgba(245,197,66,0.45), 0 0 40px rgba(214,110,60,0.5), 0 4px 0 #8a6400, 0 5px 2px rgba(0,0,0,0.4)",
+    margin: "0 0 10px",
   },
   logoKo: { color: "#d9c9ae", fontSize: 16, margin: "0 0 28px" },
   titleBtns: { display: "flex", flexDirection: "column", gap: 12, alignItems: "center" },
@@ -683,7 +715,7 @@ const st: Record<string, React.CSSProperties> = {
   notice: { marginTop: 30, fontSize: 12, color: "#8f7a63" },
   subLink: { fontSize: 12, color: "#8f7a63", textDecoration: "none" },
   // S2
-  gameWrap: { width: "100%", maxWidth: 980 },
+  gameWrap: { width: "100%", maxWidth: 980, position: "relative", zIndex: 1 },
   hud: {
     display: "flex",
     alignItems: "center",
@@ -750,7 +782,7 @@ const st: Record<string, React.CSSProperties> = {
     maxWidth: 420,
     boxShadow: "0 20px 60px rgba(0,0,0,0.6)",
   },
-  popupTitle: { fontFamily: SERIF, color: GOLD, fontSize: 30, margin: "8px 0 12px", letterSpacing: 2 },
+  popupTitle: { fontFamily: DISPLAY, color: GOLD, fontSize: 26, margin: "8px 0 12px", letterSpacing: 1 },
   popupLine: { color: "#e7d9bd", fontSize: 15, margin: "6px 0" },
   resultGrid: { display: "flex", gap: 12, justifyContent: "center", marginTop: 20 },
   resultCell: {
@@ -764,7 +796,41 @@ const st: Record<string, React.CSSProperties> = {
 };
 
 const gameCss = `
+  /* self-host 디스플레이 폰트 — 외부 요청 0 (파일이 번들 안 /fonts) */
+  @font-face {
+    font-family: "Bungee";
+    src: url("/fonts/bungee.woff2") format("woff2");
+    font-weight: 400;
+    font-display: swap;
+  }
   body { margin: 0; background: #2a0d0b; }
+
+  /* 배경 앰비언스 — 떠다니는 코인 + 비네트. pointer-events 없음, z-index 0 (콘텐츠는 그 위) */
+  .ambience { position: fixed; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
+  .ambience::after {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(120% 80% at 50% 40%, transparent 55%, rgba(15,5,4,0.55) 100%);
+  }
+  .float-coin {
+    position: absolute; font-size: 26px; opacity: 0.16;
+    filter: drop-shadow(0 0 6px rgba(245,197,66,0.5));
+    animation: floatUp linear infinite;
+    will-change: transform, opacity;
+  }
+  @keyframes floatUp {
+    0%   { transform: translateY(20px) rotate(0deg) scale(0.8); opacity: 0; }
+    12%  { opacity: 0.18; }
+    88%  { opacity: 0.18; }
+    100% { transform: translateY(-110vh) rotate(320deg) scale(1.1); opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) { .float-coin { animation: none; opacity: 0.1; } }
+
+  /* 로고 전구 아치 은은한 점멸 (타이틀) */
+  .logo-glow { animation: logoPulse 3.4s ease-in-out infinite; }
+  @keyframes logoPulse {
+    0%, 100% { filter: brightness(1); }
+    50% { filter: brightness(1.12); }
+  }
 
   .btn-gold {
     font-family: ${SANS};

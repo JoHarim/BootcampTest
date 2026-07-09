@@ -302,12 +302,13 @@ const st: Record<string, React.CSSProperties> = {
   },
   bulbRow: { display: "flex", justifyContent: "center", gap: 8, marginBottom: 6 },
   marqueeText: {
-    fontWeight: 900,
-    fontSize: 22,
-    letterSpacing: 3,
+    fontWeight: 400,
+    fontSize: 18,
+    letterSpacing: 1,
     color: GOLD,
     textShadow: "0 0 14px rgba(245,197,66,0.6)",
-    fontFamily: 'Georgia, "Times New Roman", serif',
+    // 타이틀 로고와 같은 self-host Bungee (page.tsx 의 @font-face 가 문서 전역에 로드)
+    fontFamily: '"Bungee", Georgia, serif',
   },
   body: {
     background: "linear-gradient(180deg, #33305e 0%, #232043 55%, #1a1833 100%)",
