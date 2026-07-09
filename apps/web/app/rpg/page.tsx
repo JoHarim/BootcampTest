@@ -8,23 +8,25 @@ import type {
   BattleEvent,
   BattleState,
   Character,
-  DailyFortune,
   Dungeon,
   Element,
+  FlowBuff,
   LetterSlots,
   PillarSlot,
   SaveData,
+  SinsalKey,
+  StatKey,
   SynergyDef,
   TenGodGroup,
 } from "../../lib/rpg/types";
-import { DUNGEONS, MAX_LEVEL, SYNERGIES, expForLevel } from "../../lib/rpg/content";
+import { DUNGEONS, MAX_LEVEL, SINSALS, SYNERGIES, expForLevel } from "../../lib/rpg/content";
 import {
   createCharacter,
   createCharacterFromSlots,
   elementColor,
   elementKo,
   elementMultiplier,
-  getDailyFortune,
+  getFortuneFlow,
   isStem,
 } from "../../lib/rpg/saju-engine";
 import { initBattle, rollLetterDrop, stepBattle } from "../../lib/rpg/battle";
@@ -125,6 +127,17 @@ const ELEMENT_ORDER: Element[] = ["木", "火", "土", "金", "水"];
 const ELEMENT_STAT_KO: Record<Element, string> = {
   木: "체력", 火: "공격", 土: "운", 金: "방어", 水: "지능",
 };
+// 스탯 키 → 한글 (운의 흐름 카드·전투 버프 라인 표기용)
+const STAT_KO: Record<StatKey, string> = {
+  hp: "체력", atk: "공격", def: "방어", int: "지능", luk: "운",
+};
+
+// 모드 A 성별 선택지 — 대운 계산 전용, "" 은 선택 안 함 (설계서 11장)
+const GENDERS: { value: "M" | "F" | ""; label: string }[] = [
+  { value: "M", label: "남" },
+  { value: "F", label: "여" },
+  { value: "", label: "선택 안 함" },
+];
 
 // 십성 5그룹 표시 순서 (시너지 카드·전투 컴팩트 표기 공용 — 설계서 9장 표 순)
 const TEN_GOD_GROUPS: TenGodGroup[] = ["비겁", "식상", "재성", "관성", "인성"];
@@ -151,6 +164,7 @@ const LOG_COLOR: Record<BattleEvent["kind"], string> = {
   info: "#a09d96",
   win: "#5db8a6",
   lose: "#e08b8b",
+  sinsal: "#e8a55a", // 금색 — 부활·선제 일격의 반짝임
 };
 
 type View = "loading" | "create" | "reveal" | "home" | "dungeon" | "battle" | "result";
@@ -164,10 +178,11 @@ interface PlannerProfile {
 // 전투 결과 화면용 요약
 interface ResultInfo {
   won: boolean;
-  expGained: number;
+  expGained: number; // 도화 보정 반영 후 값
   levelsGained: number;
   levelAfter: number;
   letters: string[]; // 모드 B 승리 보상 글자 (모드 A·패배는 빈 배열)
+  dohwaBonus: boolean; // 도화 신살 경험치 보정 적용 여부 (결과 캡션용)
 }
 
 export default function RpgPage() {
@@ -175,7 +190,7 @@ export default function RpgPage() {
   const [view, setView] = useState<View>("loading");
   const [character, setCharacter] = useState<Character | null>(null);
   const [save, setSave] = useState<SaveData | null>(null);
-  const [fortune, setFortune] = useState<DailyFortune | null>(null);
+  const [flows, setFlows] = useState<FlowBuff[]>([]); // 운의 흐름 (대운·세운·월운·일운)
   const [plannerProfile, setPlannerProfile] = useState<PlannerProfile | null>(null);
   const [dungeon, setDungeon] = useState<Dungeon | null>(null);
   const [stageIdx, setStageIdx] = useState<number>(0);
@@ -205,7 +220,7 @@ export default function RpgPage() {
       // 못 읽으면 버튼만 안 보일 뿐 — 무시
     }
 
-    // RPG 진행 저장 — v2. 구버전(mode 필드 없음)은 mode "A"·dayGan ""·slots null·inventory [] 로 보정해 읽는다.
+    // RPG 진행 저장 — v3. 구버전은 mode "A"·gender ""·dayGan ""·slots null·inventory [] 로 보정해 읽는다.
     let loaded: SaveData | null = null;
     try {
       const raw = window.localStorage.getItem(RPG_KEY);
@@ -230,6 +245,7 @@ export default function RpgPage() {
                 mode: "B",
                 birthDate: "",
                 birthTime: "",
+                gender: "", // 모드 B 는 생일이 없어 대운 미적용 — 성별 불필요
                 dayGan: p.dayGan,
                 slots: parseSlots(p.slots),
                 inventory: parseInventory(p.inventory),
@@ -246,6 +262,8 @@ export default function RpgPage() {
               mode: "A",
               birthDate: p.birthDate,
               birthTime: p.birthTime,
+              // v2 저장(성별 없음)은 기본 "" — 대운만 안 보일 뿐 진행도는 그대로
+              gender: p.gender === "M" || p.gender === "F" ? p.gender : "",
               dayGan: "",
               slots: null,
               inventory: [],
@@ -272,36 +290,37 @@ export default function RpgPage() {
           : createCharacter(loaded.birthDate, loaded.birthTime);
       setCharacter(c);
       setSave(loaded);
-      setFortune(getDailyFortune(c, new Date()));
+      setFlows(getFortuneFlow(c, new Date(), loaded.gender));
       setView("home");
     } catch {
       setView("create"); // 저장은 있지만 계산 실패 → 재입력
       return;
     }
-    // 구버전(mode 없음) 저장도 읽은 즉시 v2 형태로 다시 쓴다 — 이후 저장은 항상 v2
+    // 구버전(mode·gender 없음) 저장도 읽은 즉시 v3 형태로 다시 쓴다 — 이후 저장은 항상 v3
     try {
       window.localStorage.setItem(RPG_KEY, JSON.stringify(loaded));
     } catch {
-      // 못 써도 다음 저장 시점에 v2 로 통일된다 — 무시
+      // 못 써도 다음 저장 시점에 v3 로 통일된다 — 무시
     }
   }, []);
 
   // create 제출(모드 A) → 캐릭터 생성 + 저장. 실패 시 에러 문구 반환(성공은 "").
-  function handleCreate(birthDate: string, birthTime: string): string {
+  function handleCreate(birthDate: string, birthTime: string, gender: "M" | "F" | ""): string {
     let c: Character;
     try {
       c = createCharacter(birthDate, birthTime);
     } catch {
       return "사주를 계산하지 못했어요. 생년월일을 확인해주세요";
     }
-    // 같은 모드 A·같은 생일이면 진행도 유지, 다르면 새 캐릭터로 재생성
+    // 같은 모드 A·같은 생일이면 진행도 유지(성별만 바꿔도 gender 만 갱신), 다르면 새 캐릭터로 재생성
     const next: SaveData =
       save !== null && save.mode === "A" && save.birthDate === birthDate && save.birthTime === birthTime
-        ? save
+        ? { ...save, gender }
         : {
             mode: "A",
             birthDate,
             birthTime,
+            gender,
             dayGan: "",
             slots: null,
             inventory: [],
@@ -316,7 +335,7 @@ export default function RpgPage() {
     }
     setCharacter(c);
     setSave(next);
-    setFortune(getDailyFortune(c, new Date()));
+    setFlows(getFortuneFlow(c, new Date(), gender));
     setResult(null);
     setView("reveal");
     return "";
@@ -335,6 +354,7 @@ export default function RpgPage() {
       mode: "B",
       birthDate: "",
       birthTime: "",
+      gender: "", // 모드 B 는 대운 미적용
       dayGan,
       slots,
       inventory: [],
@@ -349,7 +369,7 @@ export default function RpgPage() {
     }
     setCharacter(c);
     setSave(next);
-    setFortune(getDailyFortune(c, new Date()));
+    setFlows(getFortuneFlow(c, new Date(), ""));
     setResult(null);
     setView("reveal");
     return "";
@@ -389,6 +409,7 @@ export default function RpgPage() {
     }
     setSave(next);
     setCharacter(c);
+    setFlows(getFortuneFlow(c, new Date(), next.gender)); // 재계산 경로도 흐름 갱신
   }
 
   // 전투 시작 — 시드는 현재 시각 기반(결정적 LCG의 초기값일 뿐, Math.random 아님)
@@ -397,7 +418,7 @@ export default function RpgPage() {
     if (idx < 0 || idx >= d.stages.length) return;
     const m = d.stages[idx];
     const seed = Date.now() % SEED_MOD;
-    const st = initBattle(character, save.level, m, fortune, seed);
+    const st = initBattle(character, save.level, m, flows, seed);
     battleRef.current = st;
     cmdRef.current = "attack";
     setBattle(st);
@@ -418,11 +439,17 @@ export default function RpgPage() {
       levelsGained: 0,
       levelAfter: save !== null ? save.level : 1,
       letters: [],
+      dohwaBonus: false,
     };
     if (finalState.won && save !== null && dungeon !== null) {
       const m = dungeon.stages[stageIdx];
+      // 도화 신살 — 경험치·드랍 보정 (수치는 SINSALS 단일 소스, 설계서 10장)
+      const hasDohwa = finalState.sinsals.indexOf("도화") !== -1;
+      const expGained = hasDohwa
+        ? Math.round(m.exp * (1 + (SINSALS.도화.expBonusPct ?? 0) / 100))
+        : m.exp;
       let level = save.level;
-      let exp = save.exp + m.exp;
+      let exp = save.exp + expGained;
       let ups = 0;
       while (level < MAX_LEVEL && exp >= expForLevel(level)) {
         exp -= expForLevel(level);
@@ -434,11 +461,16 @@ export default function RpgPage() {
       if (stageIdx + 1 > prevBest) {
         cleared[dungeon.id] = stageIdx + 1;
       }
-      // 모드 B 승리 보상 — 전투 종료 시점 시드를 이어받아 글자 드랍(일반 1·보스 2)
+      // 모드 B 승리 보상 — 전투 종료 시점 시드를 이어받아 글자 드랍(일반 1·보스 2, 도화는 +1개 확률)
       let inventory = save.inventory;
       let letters: string[] = [];
       if (save.mode === "B") {
-        letters = rollLetterDrop(dungeon.element, m.isBoss, finalState.seed).letters;
+        letters = rollLetterDrop(
+          dungeon.element,
+          m.isBoss,
+          finalState.seed,
+          hasDohwa ? SINSALS.도화.dropBonusPct : 0,
+        ).letters;
         inventory = [...save.inventory, ...letters];
       }
       const next: SaveData = { ...save, level, exp, clearedStages: cleared, inventory };
@@ -448,7 +480,7 @@ export default function RpgPage() {
         // 저장 실패해도 이번 세션 진행은 유지
       }
       setSave(next);
-      info = { won: true, expGained: m.exp, levelsGained: ups, levelAfter: level, letters };
+      info = { won: true, expGained, levelsGained: ups, levelAfter: level, letters, dohwaBonus: hasDohwa };
     }
     setResult(info);
     finishTimerRef.current = window.setTimeout(() => {
@@ -501,20 +533,21 @@ export default function RpgPage() {
           <CreateView
             planner={plannerProfile}
             initialMode={save !== null ? save.mode : "A"}
+            initialGender={save !== null && save.mode === "A" ? save.gender : ""}
             onSubmit={handleCreate}
             onSubmitB={handleCreateB}
           />
         ) : null}
 
-        {view === "reveal" && character !== null ? (
-          <RevealView c={character} onStart={() => setView("home")} />
+        {view === "reveal" && character !== null && save !== null ? (
+          <RevealView c={character} mode={save.mode} onStart={() => setView("home")} />
         ) : null}
 
         {view === "home" && character !== null && save !== null ? (
           <HomeView
             c={character}
             save={save}
-            fortune={fortune}
+            flows={flows}
             onDungeon={(d) => {
               setDungeon(d);
               setView("dungeon");
@@ -570,17 +603,20 @@ export default function RpgPage() {
 function CreateView({
   planner,
   initialMode,
+  initialGender,
   onSubmit,
   onSubmitB,
 }: {
   planner: PlannerProfile | null;
   initialMode: "A" | "B";
-  onSubmit: (birthDate: string, birthTime: string) => string;
+  initialGender: "M" | "F" | "";
+  onSubmit: (birthDate: string, birthTime: string, gender: "M" | "F" | "") => string;
   onSubmitB: (dayGan: string) => string;
 }) {
   const [mode, setMode] = useState<"A" | "B">(initialMode);
   const [birthDate, setBirthDate] = useState<string>("");
   const [birthTime, setBirthTime] = useState<string>("");
+  const [gender, setGender] = useState<"M" | "F" | "">(initialGender);
   const [error, setError] = useState<string>("");
 
   function handleStart() {
@@ -605,7 +641,7 @@ function CreateView({
       return;
     }
 
-    const failMsg = onSubmit(birthDate, birthTime);
+    const failMsg = onSubmit(birthDate, birthTime, gender);
     if (failMsg !== "") {
       setError(failMsg);
     }
@@ -671,6 +707,24 @@ function CreateView({
             />
           </label>
 
+          {/* 성별 3택 — 대운 계산 전용 (설계서 11장), 기본 선택 안 함 */}
+          <div style={styles.label}>
+            성별 (선택)
+            <div style={styles.genderGrid}>
+              {GENDERS.map((g) => (
+                <button
+                  key={g.label}
+                  type="button"
+                  className={gender === g.value ? "rpg-gender-btn on" : "rpg-gender-btn"}
+                  onClick={() => setGender(g.value)}
+                >
+                  {g.label}
+                </button>
+              ))}
+            </div>
+            <p style={styles.genderNote}>대운 계산에만 써요 — 안 골라도 됩니다</p>
+          </div>
+
           {planner !== null ? (
             <button
               type="button"
@@ -731,8 +785,16 @@ function CreateView({
   );
 }
 
-// ── reveal: 사주 8자 + 오행 바 + 직업 + 전투력 ────────────
-function RevealView({ c, onStart }: { c: Character; onStart: () => void }) {
+// ── reveal: 사주 8자 + 오행 바 + 직업 + 시너지·신살 + 전투력 ────────────
+function RevealView({
+  c,
+  mode,
+  onStart,
+}: {
+  c: Character;
+  mode: "A" | "B";
+  onStart: () => void;
+}) {
   const cols: { label: string; slot: PillarSlot }[] = [
     { label: "연주", slot: c.pillars.year },
     { label: "월주", slot: c.pillars.month },
@@ -812,6 +874,13 @@ function RevealView({ c, onStart }: { c: Character; onStart: () => void }) {
         <SynergyCard counts={c.tenGodCounts} />
       </div>
 
+      {/* 신살 — 지지 조합이 깨운 별 (설계서 10장). 모드 A 는 0개면 카드 숨김 */}
+      {c.sinsals.length > 0 || mode === "B" ? (
+        <div style={styles.sectionGap}>
+          <SinsalCard sinsals={c.sinsals} />
+        </div>
+      ) : null}
+
       {/* 전투력 — 세리프 히어로 */}
       <p style={styles.caption}>종합 전투력</p>
       <p style={styles.powerHero}>{c.power}</p>
@@ -866,11 +935,38 @@ function SynergyCard({ counts }: { counts: Record<TenGodGroup, number> }) {
   );
 }
 
-// ── home: 허브 (요약·[모드 B]사주판·글자 주머니·오늘의 기운·던전 입장·면책) ──────────
+// ── 신살 카드 (reveal·home 공용) — 뱃지(이모지+이름)+효과, 데이터는 SINSALS 단일 소스 ──
+// 0개 처리: 모드 B 는 수집 안내 한 줄, 모드 A 는 호출부에서 카드째 숨긴다 (설계서 10장).
+function SinsalCard({ sinsals }: { sinsals: SinsalKey[] }) {
+  return (
+    <>
+      <p style={styles.caption}>신살</p>
+      {sinsals.length > 0 ? (
+        sinsals.map((k) => {
+          const def = SINSALS[k];
+          return (
+            <div key={k} style={styles.sinsalRow}>
+              <span style={styles.sinsalBadge}>
+                {def.emoji} {def.name}
+              </span>
+              <span style={styles.sinsalDesc}>{def.desc}</span>
+            </div>
+          );
+        })
+      ) : (
+        <p style={{ ...styles.mutedText, margin: "8px 0 0" }}>
+          지지 조합이 맞으면 신살이 깨어납니다
+        </p>
+      )}
+    </>
+  );
+}
+
+// ── home: 허브 (요약·[모드 B]사주판·글자 주머니·시너지·신살·운의 흐름·던전 입장·면책) ──────────
 function HomeView({
   c,
   save,
-  fortune,
+  flows,
   onDungeon,
   onReveal,
   onRecreate,
@@ -878,7 +974,7 @@ function HomeView({
 }: {
   c: Character;
   save: SaveData;
-  fortune: DailyFortune | null;
+  flows: FlowBuff[];
   onDungeon: (d: Dungeon) => void;
   onReveal: () => void;
   onRecreate: () => void;
@@ -1047,14 +1143,28 @@ function HomeView({
         <SynergyCard counts={c.tenGodCounts} />
       </div>
 
-      {/* 오늘의 기운 */}
-      {fortune !== null ? (
-        <div style={{ ...styles.card, borderLeft: `4px solid ${elementColor(fortune.element)}` }}>
-          <p style={styles.caption}>오늘의 기운</p>
-          <p style={styles.fortuneTitle}>
-            {fortune.ganzhiKo}({fortune.ganzhiHanja})일
-          </p>
-          <p style={styles.bodyText}>{fortune.desc}</p>
+      {/* 신살 — 모드 B는 지지 장착·교체로 깨어나고 사라진다. 모드 A 는 0개면 카드 숨김 */}
+      {c.sinsals.length > 0 || save.mode === "B" ? (
+        <div style={styles.card}>
+          <SinsalCard sinsals={c.sinsals} />
+        </div>
+      ) : null}
+
+      {/* 운의 흐름 — 대운·세운·월운·일운 순, 각 운의 천간 오행이 스탯을 북돋운다 (설계서 11장) */}
+      {flows.length > 0 ? (
+        <div style={styles.card}>
+          <p style={styles.caption}>운의 흐름</p>
+          {save.mode === "A" && save.gender === "" ? (
+            <p style={styles.flowHint}>성별을 입력하면 대운이 보여요 (생일 다시 입력에서)</p>
+          ) : null}
+          {flows.map((f) => (
+            <div key={f.kind} style={styles.flowRow(elementColor(f.element))}>
+              <span style={styles.flowLabel}>{f.label}</span>
+              <span style={{ ...styles.flowBonus, color: elementColor(f.element) }}>
+                {STAT_KO[f.statKey]} +{f.bonusPct}%
+              </span>
+            </div>
+          ))}
         </div>
       ) : null}
 
@@ -1205,13 +1315,24 @@ function BattleView({
         <FighterPanel who={b.foe} barColor="#c64545" align="right" />
       </div>
 
-      {/* 오늘의 기운 버프 */}
-      {b.fortune !== null ? <p style={styles.buffLine}>☀ {b.fortune.desc}</p> : null}
+      {/* 운의 흐름 버프 — 컴팩트 한 줄 (대운·세운·월운·일운) */}
+      {b.flows.length > 0 ? (
+        <p style={styles.buffLine}>
+          ☀ {b.flows.map((f) => `${f.kind} ${STAT_KO[f.statKey]}+${f.bonusPct}%`).join(" · ")}
+        </p>
+      ) : null}
 
       {/* 발동 중인 십성 시너지 — 이모지 ×n 한 줄 */}
       {activeSynergy.length > 0 ? (
         <p style={styles.synergyLine}>
           ✦ {activeSynergy.map((g) => `${SYNERGIES[g].emoji}×${b.synergy[g]}`).join(" ")}
+        </p>
+      ) : null}
+
+      {/* 발동 중인 신살 — 이모지 나열 한 줄 */}
+      {b.sinsals.length > 0 ? (
+        <p style={styles.sinsalLine}>
+          ✴ {b.sinsals.map((k) => SINSALS[k].emoji).join(" ")}
         </p>
       ) : null}
 
@@ -1304,6 +1425,12 @@ function ResultView({
         <p style={styles.bodyText}>
           {m.emoji} {m.name}을(를) 물리치고 경험치 +{r.expGained}을 얻었어요.
         </p>
+        {/* 도화 신살 — 경험치 보정 캡션 (수치는 SINSALS 단일 소스) */}
+        {r.dohwaBonus ? (
+          <p style={styles.dohwaNote}>
+            🌸 도화 보너스! 경험치 +{SINSALS.도화.expBonusPct}% 보정
+          </p>
+        ) : null}
         {r.levelsGained > 0 ? (
           <span style={styles.levelUpBadge}>
             LEVEL UP! Lv.{r.levelAfter} (+{r.levelsGained})
@@ -1428,6 +1555,13 @@ const designCss = `
   }
   .rpg-chip-btn:active { background: #f5f0e8; }
   .rpg-chip-btn.on { box-shadow: 0 0 0 3px rgba(204,120,92,0.25); }
+  .rpg-gender-btn {
+    width: 100%; padding: 10px 0; text-align: center; cursor: pointer;
+    font-family: ${SANS}; font-size: 13px; font-weight: 500; color: #3d3d3a;
+    background: #faf9f5; border: 1px solid #e6dfd8; border-radius: 8px;
+  }
+  .rpg-gender-btn:active { background: #f5f0e8; }
+  .rpg-gender-btn.on { color: #141413; border-color: #cc785c; box-shadow: 0 0 0 3px rgba(204,120,92,0.15); }
 `;
 
 const styles = {
@@ -1680,12 +1814,40 @@ const styles = {
     color: "#141413",
     margin: 0,
   } as const,
-  fortuneTitle: {
-    fontFamily: SERIF,
-    fontSize: 22,
-    letterSpacing: "-0.3px",
-    color: "#141413",
-    margin: "0 0 6px",
+  // home — 운의 흐름 카드 (줄마다 그 운의 오행색 좌측 보더)
+  flowRow: (color: string) =>
+    ({
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      background: "#faf9f5",
+      border: "1px solid #e6dfd8",
+      borderLeft: `4px solid ${color}`,
+      borderRadius: 8,
+      padding: "8px 12px",
+      marginTop: 6,
+    }) as const,
+  flowLabel: {
+    flex: 1,
+    fontFamily: SANS,
+    fontSize: 13,
+    color: "#3d3d3a",
+  } as const,
+  flowBonus: {
+    fontFamily: SANS,
+    fontSize: 13,
+    fontWeight: 500,
+    flexShrink: 0,
+  } as const,
+  flowHint: {
+    fontFamily: SANS,
+    fontSize: 12,
+    color: "#8e8b82",
+    background: "#faf9f5",
+    border: "1px dashed #e6dfd8",
+    borderRadius: 8,
+    padding: "8px 12px",
+    margin: "6px 0 0",
   } as const,
   dungeonEmoji: { fontSize: 28, lineHeight: 1.2, flexShrink: 0 } as const,
   dungeonName: {
@@ -1816,6 +1978,12 @@ const styles = {
     color: "#5db8a6", // 木 teal — 내 기운을 북돋는 결
     margin: "0 0 10px",
   } as const,
+  sinsalLine: {
+    fontFamily: SANS,
+    fontSize: 12,
+    color: "#e8a55a", // 금색 — 깨어난 신살 (sinsal 로그와 같은 톤)
+    margin: "0 0 10px",
+  } as const,
   logBox: {
     background: "#1f1e1b", // surface-dark-soft
     borderRadius: 8,
@@ -1877,6 +2045,18 @@ const styles = {
     color: "#141413",
   } as const,
   stemKo: { fontFamily: SANS, fontSize: 11, fontWeight: 500 } as const,
+  genderGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, 1fr)",
+    gap: 8,
+    marginTop: 6,
+  } as const,
+  genderNote: {
+    fontFamily: SANS,
+    fontSize: 12,
+    color: "#8e8b82",
+    margin: "6px 0 0",
+  } as const,
 
   // home — 사주판·글자 주머니 (모드 B)
   boardHead: {
@@ -1979,6 +2159,38 @@ const styles = {
     flexShrink: 0,
   } as const,
 
+  // 신살 카드 (reveal·home 공용)
+  sinsalRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    background: "#faf9f5",
+    border: "1px solid #e6dfd8",
+    borderRadius: 8,
+    padding: "8px 12px",
+    marginTop: 6,
+  } as const,
+  sinsalBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    fontFamily: SANS,
+    fontSize: 13,
+    fontWeight: 500,
+    color: "#141413",
+    background: "#efe9de", // surface-card — 뱃지 필
+    borderRadius: 9999,
+    padding: "4px 10px",
+    flexShrink: 0,
+  } as const,
+  sinsalDesc: {
+    flex: 1,
+    fontFamily: SANS,
+    fontSize: 12,
+    lineHeight: 1.5,
+    color: "#8e8b82",
+  } as const,
+
   // result — 획득 글자 칩 (모드 B)
   dropRow: {
     display: "flex",
@@ -2003,6 +2215,13 @@ const styles = {
   dropChipEl: { fontFamily: SANS, fontSize: 12, fontWeight: 500 } as const,
 
   // result
+  dohwaNote: {
+    fontFamily: SANS,
+    fontSize: 13,
+    fontWeight: 500,
+    color: "#e8a55a", // 금색 — 신살 톤 통일
+    margin: "0 0 12px",
+  } as const,
   levelUpBadge: {
     display: "inline-block",
     fontFamily: SANS,

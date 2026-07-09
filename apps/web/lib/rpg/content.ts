@@ -5,6 +5,8 @@ import type {
   Element,
   JobClass,
   Monster,
+  SinsalDef,
+  SinsalKey,
   SynergyDef,
   TenGodGroup,
   TenGodKey,
@@ -266,6 +268,39 @@ export const SYNERGIES: Record<TenGodGroup, SynergyDef> = {
   재성: { name: "재물의 눈", emoji: "💰", unit: 3, descUnit: "치명타 확률 +{u}%p×{n}" },
   관성: { name: "법도의 갑주", emoji: "🛡️", unit: 4, descUnit: "받는 피해 −{u}%×{n}" },
   인성: { name: "학문의 숨", emoji: "📜", unit: 1, descUnit: "매 턴 최대 생명력 {u}%×{n} 회복" },
+};
+
+// ── 신살 데이터 (설계서 10장 — 효과 파라미터의 단일 소스, engine·battle·UI 공용) ──
+export const SINSALS: Record<SinsalKey, SinsalDef> = {
+  도화: {
+    key: "도화",
+    name: "도화살",
+    emoji: "🌸",
+    desc: "매혹의 기운 — 경험치 +20%, 글자 드랍 +1개 확률 35%",
+    dropBonusPct: 35,
+    expBonusPct: 20,
+  },
+  역마: {
+    key: "역마",
+    name: "역마살",
+    emoji: "🐎",
+    desc: "떠도는 말의 기세 — 전투 시작 시 공격력 60%의 선제 일격",
+    strikePower: 0.6,
+  },
+  화개: {
+    key: "화개",
+    name: "화개살",
+    emoji: "🪷",
+    desc: "홀로 피는 연꽃 — 스킬 쿨다운 1턴 감소",
+    cooldownCut: 1,
+  },
+  천을귀인: {
+    key: "천을귀인",
+    name: "천을귀인",
+    emoji: "🌟",
+    desc: "하늘이 돕는 별 — 전투당 1회, 쓰러질 때 최대 생명력 30%로 부활",
+    reviveHpPct: 30,
+  },
 };
 
 // ── 던전 생성 헬퍼 (설계서 5장 공식 — 전부 결정적) ────────

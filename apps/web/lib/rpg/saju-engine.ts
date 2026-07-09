@@ -1,16 +1,18 @@
 // 사주 RPG 엔진 — 생일 → 사주 4주 → 오행 점수 → 능력치·직업(격국)을 만드는 순수 함수 모음.
 // lunar-javascript(외부 라이브러리)는 rpg 모듈 중 이 파일에서만 import 한다 (플래너 lib/saju.ts 패턴).
-// 수치·공식은 docs/plan/rpg-design.md 1·2·3·8장을 따른다. 플래너와 결합하지 않도록 표는 자체 보유.
+// 수치·공식은 docs/plan/rpg-design.md 1·2·3·8·10·11장을 따른다. 플래너와 결합하지 않도록 표는 자체 보유.
 import pkg from "lunar-javascript";
 
 import { JOBS, UNFORMED_JOB } from "./content";
 import type {
   Character,
-  DailyFortune,
   Element,
   ElementScore,
+  FlowBuff,
+  FlowKind,
   FourPillars,
   LetterSlots,
+  SinsalKey,
   StatKey,
   Stats,
   TenGodGroup,
@@ -32,7 +34,11 @@ const STAT_BASE = 16; // 능력치 바닥값
 const STAT_SCALE = 6; // 시주 포함(8자) 계수
 const STAT_SCALE_NO_TIME = 7.5; // 시주 제외(6자) 계수 — 총 가중치 비율 ≈ 4:5 보정
 const GROWTH_PER_LEVEL = 0.1; // 레벨당 전 스탯 +10% (시뮬 튜닝: 8%는 약체 사주가 보스 벽을 못 넘음)
-const DAILY_BONUS_PCT = 15; // 오늘의 기운 스탯 보너스 %
+// 운의 흐름 보너스 % (설계서 11장 — 주기가 길수록 크되, 매일 바뀌는 일운이 체감 코어라 세운보다 높다)
+const FLOW_DAEUN_PCT = 20; // 대운(10년)
+const FLOW_SEUN_PCT = 10; // 세운(올해)
+const FLOW_WOLUN_PCT = 5; // 월운(이달)
+const FLOW_ILUN_PCT = 15; // 일운(오늘) — 구 '오늘의 기운' 승계
 const MULT_ADVANTAGE = 1.5; // 내 속성이 상대를 극함
 const MULT_DISADVANTAGE = 0.7; // 상대 속성이 나를 극함
 const MULT_NEUTRAL = 1.0;
@@ -130,6 +136,43 @@ const HIDDEN_STEMS: Record<string, string[]> = {
   亥: ["壬", "甲"],
 };
 
+// 신살 삼합군 타깃 (설계서 10장) — 기준지가 속한 삼합군(申子辰/寅午戌/巳酉丑/亥卯未)별 도화·역마·화개 타깃 지지
+const SAMHAP_TARGETS: Record<string, { 도화: string; 역마: string; 화개: string }> = {
+  // 申子辰 군
+  申: { 도화: "酉", 역마: "寅", 화개: "辰" },
+  子: { 도화: "酉", 역마: "寅", 화개: "辰" },
+  辰: { 도화: "酉", 역마: "寅", 화개: "辰" },
+  // 寅午戌 군
+  寅: { 도화: "卯", 역마: "申", 화개: "戌" },
+  午: { 도화: "卯", 역마: "申", 화개: "戌" },
+  戌: { 도화: "卯", 역마: "申", 화개: "戌" },
+  // 巳酉丑 군
+  巳: { 도화: "午", 역마: "亥", 화개: "丑" },
+  酉: { 도화: "午", 역마: "亥", 화개: "丑" },
+  丑: { 도화: "午", 역마: "亥", 화개: "丑" },
+  // 亥卯未 군
+  亥: { 도화: "子", 역마: "巳", 화개: "未" },
+  卯: { 도화: "子", 역마: "巳", 화개: "未" },
+  未: { 도화: "子", 역마: "巳", 화개: "未" },
+};
+
+// 천을귀인 (설계서 10장) — 일간 → 귀인 지지 쌍 (甲戊庚→丑未 / 乙己→子申 / 丙丁→亥酉 / 壬癸→巳卯 / 辛→午寅)
+const CHEONEUL_TARGETS: Record<string, string[]> = {
+  甲: ["丑", "未"],
+  戊: ["丑", "未"],
+  庚: ["丑", "未"],
+  乙: ["子", "申"],
+  己: ["子", "申"],
+  丙: ["亥", "酉"],
+  丁: ["亥", "酉"],
+  壬: ["巳", "卯"],
+  癸: ["巳", "卯"],
+  辛: ["午", "寅"],
+};
+
+// 신살 판정 순서 고정 (Character.sinsals 계약 — 도화·역마·화개·천을귀인)
+const SINSAL_ORDER: SinsalKey[] = ["도화", "역마", "화개", "천을귀인"];
+
 // 십성 → 시너지 5그룹 (설계서 9장): 비견·겁재→비겁 / 식신·상관→식상 / 편재·정재→재성 / 편관·정관→관성 / 편인·정인→인성
 const TEN_GOD_GROUP: Record<TenGodKey, TenGodGroup> = {
   비견: "비겁",
@@ -172,15 +215,6 @@ const ELEMENT_STAT: Record<Element, StatKey> = {
   土: "luk",
   金: "def",
   水: "int",
-};
-
-// 능력치 키 → 표시 이름 (일운 desc 문구용)
-const STAT_KO: Record<StatKey, string> = {
-  hp: "체력",
-  atk: "공격력",
-  def: "방어력",
-  int: "지능",
-  luk: "운",
 };
 
 // 오행 → 표시 색 (설계서 7장 팔레트)
@@ -260,6 +294,45 @@ function countTenGods(dayGan: string, p: FourPillars): Record<TenGodGroup, numbe
   return counts;
 }
 
+// 신살 판정 (설계서 10장) — 기준지 = 채워진 일지·년지 각각.
+// 도화·역마·화개는 표준대로 기준지가 아닌 "다른 기둥의 지지"에서 타깃을 찾는다
+// (2026-07-09 시뮬 교정: 기준지 자신 포함 판정은 화개가 72% 발동해 특별함이 사라짐).
+// 천을귀인은 일간 기준 귀인 지지가 사주에 있으면 (명리적으로 원래 흔한 길신 — 그대로).
+// 결과는 중복 없이 고정 순서 — 두 생성 함수 공용.
+function detectSinsals(dayGan: string, p: FourPillars): SinsalKey[] {
+  const allZhi = [p.year.zhi, p.month.zhi, p.day.zhi, p.time.zhi];
+  const branches = allZhi.filter((zhi): zhi is string => zhi !== null);
+
+  const found = new Set<SinsalKey>();
+
+  // 도화·역마·화개 — 기준지(일지 idx 2 · 년지 idx 0)별 삼합군 타깃을 기준지 외 기둥에서 대조
+  for (const anchorIdx of [2, 0]) {
+    const anchor = allZhi[anchorIdx];
+    if (anchor !== null) {
+      const targets = SAMHAP_TARGETS[anchor];
+      const others = allZhi.filter((zhi, i) => i !== anchorIdx && zhi !== null);
+      if (others.includes(targets.도화)) {
+        found.add("도화");
+      }
+      if (others.includes(targets.역마)) {
+        found.add("역마");
+      }
+      if (others.includes(targets.화개)) {
+        found.add("화개");
+      }
+    }
+  }
+
+  // 천을귀인 — 일간의 귀인 지지 쌍 중 하나라도 사주에 있으면
+  for (const noble of CHEONEUL_TARGETS[dayGan]) {
+    if (branches.includes(noble)) {
+      found.add("천을귀인");
+    }
+  }
+
+  return SINSAL_ORDER.filter((key) => found.has(key));
+}
+
 // 사주 글자 오행 점수 — 자리별 가중치 합산 후 생극 보정 (설계서 1장)
 // v2: 빈 슬롯(null)은 0 기여로 건너뛴다 — 모드 A 시각 미입력(time {null,null})과 모드 B 미장착 슬롯 공용.
 // 지장간은 채워진 지지만 기여한다. 자리별 가중치·생극 보정은 v1 과 동일.
@@ -329,6 +402,79 @@ function toPower(stats: Stats): number {
       stats.def * POWER_WEIGHT.def +
       stats.int * POWER_WEIGHT.int +
       stats.luk * POWER_WEIGHT.luk,
+  );
+}
+
+// 간지 한 쌍 → FlowBuff (설계서 11장) — 천간 오행이 가산 스탯을 정한다. 미인식 글자는 throw.
+function makeFlowBuff(
+  kind: FlowKind,
+  gan: string,
+  zhi: string,
+  bonusPct: number,
+  toLabel: (ganzhiKo: string, ganzhiHanja: string) => string,
+): FlowBuff {
+  if (STEM_KO[gan] === undefined || BRANCH_KO[zhi] === undefined) {
+    throw new Error("운의 간지를 인식하지 못했습니다.");
+  }
+  const element = STEM_ELEMENT[gan];
+  const ganzhiKo = `${STEM_KO[gan]}${BRANCH_KO[zhi]}`;
+  const ganzhiHanja = `${gan}${zhi}`;
+  return {
+    kind,
+    ganzhiKo,
+    ganzhiHanja,
+    element,
+    statKey: ELEMENT_STAT[element],
+    bonusPct,
+    label: toLabel(ganzhiKo, ganzhiHanja),
+  };
+}
+
+// 현재 대운 탐색 (설계서 11장) — 생일 EightChar 재계산 → getYun(성별) 대운 배열에서
+// 간지가 있고(첫 원소는 상운 전 구간이라 "" 일 수 있음) 시작 연도 ≤ 올해인 마지막 구간.
+// 상운 전 아동은 해당 구간이 없으므로 null — 호출부에서 대운을 생략한다.
+function findCurrentDaeun(c: Character, thisYear: number, gender: "M" | "F"): FlowBuff | null {
+  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(c.birthDate);
+  if (dateMatch === null) {
+    throw new Error("생년월일 형식이 올바르지 않습니다.");
+  }
+  // 시각 미입력('')이면 정오 더미 — createCharacter 의 계산 규칙과 동일
+  const timeMatch = /^(\d{2}):(\d{2})$/.exec(c.birthTime);
+  const hour = timeMatch === null ? 12 : Number(timeMatch[1]);
+  const minute = timeMatch === null ? 0 : Number(timeMatch[2]);
+
+  const eightChar = Solar.fromYmdHms(
+    Number(dateMatch[1]),
+    Number(dateMatch[2]),
+    Number(dateMatch[3]),
+    hour,
+    minute,
+    0,
+  )
+    .getLunar()
+    .getEightChar();
+
+  // lunar-javascript getYun 규약: 남 1 / 여 0
+  const daYunList = eightChar.getYun(gender === "M" ? 1 : 0).getDaYun();
+  let current: (typeof daYunList)[number] | null = null;
+  for (const daYun of daYunList) {
+    if (daYun.getGanZhi() !== "" && daYun.getStartYear() <= thisYear) {
+      current = daYun;
+    }
+  }
+  if (current === null) {
+    return null;
+  }
+
+  const ganzhi: string = current.getGanZhi();
+  const startAge: number = current.getStartAge();
+  const endAge: number = current.getEndAge();
+  return makeFlowBuff(
+    "대운",
+    ganzhi[0],
+    ganzhi[1],
+    FLOW_DAEUN_PCT,
+    (ko, hanja) => `${startAge}~${endAge}세 ${ko}(${hanja}) 대운`,
   );
 }
 
@@ -407,6 +553,7 @@ export function createCharacter(birthDate: string, birthTime: string): Character
     job,
     power,
     tenGodCounts: countTenGods(dayMaster, pillars),
+    sinsals: detectSinsals(dayMaster, pillars),
   };
 }
 
@@ -456,6 +603,7 @@ export function createCharacterFromSlots(dayGan: string, slots: LetterSlots): Ch
     job,
     power,
     tenGodCounts: countTenGods(dayGan, pillars),
+    sinsals: detectSinsals(dayGan, pillars),
   };
 }
 
@@ -483,30 +631,44 @@ export function letterElement(letter: string): Element {
   throw new Error("사주 글자를 인식하지 못했습니다.");
 }
 
-// 오늘의 기운(일운) — 오늘 일진 천간의 오행에 해당하는 스탯 +15% (설계서 4장)
-// c 는 계약 시그니처 유지용 — 일운은 캐릭터와 무관하게 오늘 일진만으로 결정된다.
-export function getDailyFortune(c: Character, today: Date): DailyFortune {
+// 운의 흐름 (설계서 11장, PRD 5-8) — 대운·세운·월운·일운 4단 스택. 각 운 천간의 오행이 대응 스탯을 가산.
+// 세운·월운·일운은 오늘 날짜만으로 항상 생성. 대운은 모드 A(생일 보유) + 성별 입력 시만, 상운 전이면 생략.
+// 반환 순서 고정: 대운·세운·월운·일운 (types.ts 계약).
+export function getFortuneFlow(c: Character, today: Date, gender: "M" | "F" | ""): FlowBuff[] {
   const lunar = Solar.fromYmd(
     today.getFullYear(),
     today.getMonth() + 1,
     today.getDate(),
   ).getLunar();
-  const gan: string = lunar.getDayGan();
-  const zhi: string = lunar.getDayZhi();
-  if (STEM_KO[gan] === undefined || BRANCH_KO[zhi] === undefined) {
-    throw new Error("오늘 일진을 인식하지 못했습니다.");
+
+  const flows: FlowBuff[] = [];
+
+  // 대운(+20%) — 10년 주기
+  if (c.birthDate !== "" && gender !== "") {
+    const daeun = findCurrentDaeun(c, today.getFullYear(), gender);
+    if (daeun !== null) {
+      flows.push(daeun);
+    }
   }
 
-  const element = STEM_ELEMENT[gan];
-  const statKey = ELEMENT_STAT[element];
-  return {
-    ganzhiKo: `${STEM_KO[gan]}${BRANCH_KO[zhi]}`,
-    ganzhiHanja: `${gan}${zhi}`,
-    element,
-    statKey,
-    bonusPct: DAILY_BONUS_PCT,
-    desc: `오늘은 ${element} 기운 — ${STAT_KO[statKey]} +${DAILY_BONUS_PCT}%`,
-  };
+  // 세운(+10%) — 올해 간지
+  const yearGanzhi: string = lunar.getYearInGanZhi();
+  flows.push(
+    makeFlowBuff("세운", yearGanzhi[0], yearGanzhi[1], FLOW_SEUN_PCT, (ko, hanja) => `올해 ${ko}(${hanja})년`),
+  );
+
+  // 월운(+5%) — 이달 간지
+  const monthGanzhi: string = lunar.getMonthInGanZhi();
+  flows.push(
+    makeFlowBuff("월운", monthGanzhi[0], monthGanzhi[1], FLOW_WOLUN_PCT, (ko, hanja) => `이달 ${ko}(${hanja})`),
+  );
+
+  // 일운(+15%) — 오늘 일진 (구 '오늘의 기운' 승계)
+  flows.push(
+    makeFlowBuff("일운", lunar.getDayGan(), lunar.getDayZhi(), FLOW_ILUN_PCT, (ko, hanja) => `오늘 ${ko}(${hanja})일`),
+  );
+
+  return flows;
 }
 
 // 레벨 성장 반영 능력치: 모든 스탯 round(base × (1 + 0.08×(L-1))) — 패시브 반영 전

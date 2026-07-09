@@ -92,16 +92,36 @@ export interface Character {
   job: JobClass;
   power: number; // 종합 전투력 (공개 화면 연출용, 정수)
   tenGodCounts: Record<TenGodGroup, number>; // 십성 시너지 집계 — 일간 제외 천간 3 + 지지 본기 4, 빈 슬롯 미집계 (설계서 9장)
+  sinsals: SinsalKey[]; // 발동 중 신살 (설계서 10장 판정 — 중복 없음, 판정 순서 고정: 도화·역마·화개·천을귀인)
 }
 
-// 오늘의 기운 (일운) — PRD 5-8의 MVP 축소판
-export interface DailyFortune {
-  ganzhiKo: string; // 예: "임오"
-  ganzhiHanja: string; // 예: "壬午"
-  element: Element; // 오늘 일진 천간의 오행
-  statKey: StatKey; // 오늘 +% 받는 스탯
-  bonusPct: number; // 예: 15
-  desc: string; // 예: "오늘은 火 기운 — 공격력 +15%"
+// 운의 흐름 (설계서 11장, PRD 5-8) — 대운·세운·월운·일운의 천간 오행이 대응 스탯을 가산
+export type FlowKind = "대운" | "세운" | "월운" | "일운";
+
+export interface FlowBuff {
+  kind: FlowKind;
+  ganzhiKo: string; // 예: "병오"
+  ganzhiHanja: string; // 예: "丙午"
+  element: Element; // 그 운 천간의 오행
+  statKey: StatKey; // 가산 받는 스탯
+  bonusPct: number; // 대운 20 / 세운 10 / 월운 5 / 일운 15
+  label: string; // 예: "28~37세 경오(庚午) 대운" / "올해 병오(丙午)년" / "오늘 갑신(甲申)일"
+}
+
+// ── 신살 (설계서 10장, PRD 5-5) ───────────────────────
+export type SinsalKey = "도화" | "역마" | "화개" | "천을귀인";
+
+export interface SinsalDef {
+  key: SinsalKey;
+  name: string; // 예: "도화살"
+  emoji: string;
+  desc: string; // 효과 한 줄 (수치 포함)
+  // 효과 파라미터 — 해당 신살만 사용 (content.ts SINSALS 데이터가 단일 소스)
+  dropBonusPct?: number; // 도화: 글자 드랍 +1개 확률 %
+  expBonusPct?: number; // 도화: 경험치 보너스 %
+  strikePower?: number; // 역마: 선제 일격 = atk × 이 배율
+  cooldownCut?: number; // 화개: 스킬 쿨다운 감소 (턴)
+  reviveHpPct?: number; // 천을귀인: 부활 시 maxHp %
 }
 
 // ── 콘텐츠 ────────────────────────────────────────────
@@ -142,7 +162,7 @@ export interface Combatant {
 export type BattleCommand = "attack" | "skill";
 
 export interface BattleEvent {
-  kind: "player-hit" | "foe-hit" | "skill" | "heal" | "crit" | "info" | "win" | "lose";
+  kind: "player-hit" | "foe-hit" | "skill" | "heal" | "crit" | "info" | "win" | "lose" | "sinsal";
   text: string; // 로그 한 줄 (예: "⚔️ 불도깨비에게 24 피해! (상성 유리 ×1.5)")
   amount?: number;
 }
@@ -153,8 +173,11 @@ export interface BattleState {
   foe: Combatant;
   job: JobClass;
   skillCooldown: number; // 0이면 사용 가능
-  fortune: DailyFortune | null;
+  skillCooldownMax: number; // 스킬 사용 후 재설정값 (화개 신살이 job.skill.cooldown 에서 감산)
+  flows: FlowBuff[]; // 운의 흐름 (initBattle 에서 반영 완료 — 표시용 보관)
   synergy: Record<TenGodGroup, number>; // 십성 시너지 집계 (initBattle 에서 Character.tenGodCounts 복사)
+  sinsals: SinsalKey[]; // 발동 중 신살 (initBattle 에서 Character.sinsals 복사)
+  reviveUsed: boolean; // 천을귀인 부활 사용 여부 (전투당 1회)
   seed: number; // 결정적 난수 상태 (스텝마다 갱신)
   over: boolean;
   won: boolean;
@@ -166,6 +189,7 @@ export interface SaveData {
   mode: "A" | "B"; // A = 내 사주 / B = 사주 수집
   birthDate: string; // 모드 A 전용 (B 는 "")
   birthTime: string; // 모드 A 전용 (B 는 "")
+  gender: "M" | "F" | ""; // 모드 A 대운 계산용 (선택 — "" 이면 대운 미표시). v2 저장 마이그레이션 기본 ""
   dayGan: string; // 모드 B 전용 — 선택한 일간 한자 (A 는 "")
   slots: LetterSlots | null; // 모드 B 전용 장착 상태 (A 는 null)
   inventory: string[]; // 모드 B 전용 — 획득 글자(한자 1글자씩, 중복 허용) (A 는 [])
@@ -182,22 +206,29 @@ export interface SaveData {
 //   export const STEM_POOL: Record<Element, string[]>    // 오행 → 천간 글자 풀
 //   export const BRANCH_POOL: Record<Element, string[]>  // 오행 → 지지 글자 풀
 //   export const SYNERGIES: Record<TenGodGroup, SynergyDef>  // 십성 시너지 데이터 (수치·이름 단일 소스, 설계서 9장)
+//   export const SINSALS: Record<SinsalKey, SinsalDef>       // 신살 데이터 (효과 파라미터 단일 소스, 설계서 10장)
 //   export function expForLevel(level: number): number   // 다음 레벨까지 필요 경험치
 //   export const MAX_LEVEL: number
 // saju-engine.ts:
 //   export function createCharacter(birthDate: string, birthTime: string): Character  // 모드 A. 실패 시 throw
 //   export function createCharacterFromSlots(dayGan: string, slots: LetterSlots): Character  // 모드 B. 빈 슬롯 0 기여, 스케일 ×6 고정, 월지 없으면 UNFORMED_JOB
-//   (두 생성 함수 모두 tenGodCounts 를 채운다 — 일간 제외 천간 3 + 지지 본기 4, 빈 슬롯 미집계)
+//   (두 생성 함수 모두 tenGodCounts 와 sinsals 를 채운다)
 //   export function isStem(letter: string): boolean   // 천간이면 true, 지지면 false (미인식은 throw)
-//   export function getDailyFortune(c: Character, today: Date): DailyFortune
+//   export function getFortuneFlow(c: Character, today: Date, gender: "M" | "F" | ""): FlowBuff[]
+//     — 일운(15)+월운(5)+세운(10) 항상, 대운(20)은 모드 A(birthDate 있음)+성별 있을 때만 (상운 전이면 생략)
+//     — 반환 순서 고정: 대운·세운·월운·일운. getDailyFortune/DailyFortune 은 v3 에서 제거됨
 //   export function statsAtLevel(base: Stats, level: number): Stats  // 레벨 성장 반영 (패시브 포함 전)
 //   export function elementMultiplier(attacker: Element, defender: Element): number  // 극함 1.5 / 극당함 0.7 / 그 외 1.0
 //   export function elementColor(e: Element): string  // 오행 → 표시 색 (DESIGN.md 팔레트)
 //   export function elementKo(e: Element): string     // 木→목 …
 //   export function letterElement(letter: string): Element  // 천간/지지 글자 → 오행 (미인식은 throw)
 // battle.ts:
-//   export function initBattle(c: Character, level: number, m: Monster, f: DailyFortune | null, seed: number): BattleState
+//   export function initBattle(c: Character, level: number, m: Monster, flows: FlowBuff[], seed: number): BattleState
+//     — flows 의 statKey 별 bonusPct 를 스탯에 곱연산(기존 applyPct 체인), 화개면 skillCooldownMax 감산
 //   export function stepBattle(s: BattleState, cmd: BattleCommand): { state: BattleState; events: BattleEvent[] }
 //     — 순수 함수(인자 불변), 플레이어 행동 → 생존 시 몬스터 반격 1회까지가 한 스텝
-//   export function rollLetterDrop(dungeonElement: Element, isBoss: boolean, seed: number): { letters: string[]; seed: number }
+//     — 역마: turn 1 첫 행동 전 선제 일격(atk×배율, 변동·치명 없음, kind "sinsal")
+//     — 천을귀인: 치명상 시 1회 부활(maxHp×%, kind "sinsal") — 부활 턴은 패배 아님
+//   export function rollLetterDrop(dungeonElement: Element, isBoss: boolean, seed: number, dropBonusPct?: number): { letters: string[]; seed: number }
 //     — 승리 보상: 일반 1글자·보스 2글자, 70% 던전 오행 풀 / 30% 전체 랜덤 (시드 LCG)
+//     — dropBonusPct(도화)만큼의 확률로 +1글자
